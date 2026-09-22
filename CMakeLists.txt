@@ -1,0 +1,55 @@
+cmake_minimum_required(VERSION 3.24)
+project(distributed_moe LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(MOE_ENABLE_CUDA "Build the optional CUDA/NCCL transport" ON)
+set(CMAKE_CUDA_ARCHITECTURES 75 CACHE STRING "CUDA architectures for RTX 2060 and compatible GPUs")
+# 75 pq tengo una rtx2060
+
+add_library(moe_core
+    src/vector_index.cpp
+)
+target_include_directories(moe_core PUBLIC include)
+target_compile_features(moe_core PUBLIC cxx_std_20)
+target_compile_options(moe_core PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(moe_demo src/main.cpp)
+target_link_libraries(moe_demo PRIVATE moe_core)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(moe_tests tests/test_vector_index.cpp)
+    target_link_libraries(moe_tests PRIVATE moe_core)
+    add_test(NAME moe_tests COMMAND moe_tests)
+endif()
+
+if(MOE_ENABLE_CUDA)
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        enable_language(CUDA)
+        find_package(CUDAToolkit QUIET)
+        find_library(NCCL_LIBRARY nccl)
+        find_path(NCCL_INCLUDE_DIR nccl.h)
+        if(CUDAToolkit_FOUND AND NCCL_LIBRARY AND NCCL_INCLUDE_DIR)
+            add_library(moe_cuda src/cuda_backend.cu)
+            target_include_directories(moe_cuda PUBLIC include ${NCCL_INCLUDE_DIR})
+            target_link_libraries(moe_cuda PUBLIC moe_core CUDA::cudart ${NCCL_LIBRARY})
+            set_target_properties(moe_cuda PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED YES)
+            target_compile_definitions(moe_cuda PUBLIC MOE_HAS_CUDA_NCCL=1)
+
+            add_executable(moe_cuda_smoke tests/cuda_smoke.cu)
+            target_link_libraries(moe_cuda_smoke PRIVATE moe_cuda)
+            set_target_properties(moe_cuda_smoke PROPERTIES CUDA_STANDARD 20 CUDA_STANDARD_REQUIRED YES)
+            message(STATUS "CUDA/NCCL transport enabled")
+        else()
+            message(STATUS "CUDA compiler found, but CUDA toolkit or NCCL headers/library are missing; CPU build only")
+        endif()
+    else()
+        message(STATUS "nvcc not found; CPU build only")
+    endif()
+endif()

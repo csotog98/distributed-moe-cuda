@@ -1,0 +1,5 @@
+build/
+.vscode/
+compile_commands.json
+*.o
+*.so

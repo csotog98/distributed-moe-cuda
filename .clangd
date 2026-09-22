@@ -1,0 +1,15 @@
+CompileFlags:
+  CompilationDatabase: build
+  Remove:
+    - -forward-unknown-to-host-compiler
+    - --options-file
+    - "*.rsp"
+    - "--generate-code=*"
+  Add:
+    - -x
+    - cuda
+    - --cuda-path=/opt/cuda
+    - --cuda-gpu-arch=sm_75
+    - -I/home/username9098/Desktop/Proyectos/HPC/p1/include
+    - -I/opt/cuda/targets/x86_64-linux/include
+    - -I/opt/cuda/targets/x86_64-linux/include/cccl
