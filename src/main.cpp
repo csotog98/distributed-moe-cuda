@@ -11,7 +11,7 @@ int main() {
         {3, {0.7F, 0.8F}}, {4, {0.9F, 1.0F}},
     };
 
-    const moe::RoutingPlan plan = router.route(batch);
+    const moe::RoutingPlan plan = router.route(batch.data(), batch.size());
     std::cout << "routed " << plan.sends.size() << " tokens across "
               << world_size << " ranks\n";
     for (std::size_t rank = 0; rank < plan.by_rank.size(); ++rank) {

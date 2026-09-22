@@ -11,12 +11,12 @@ TokenRouter::TokenRouter(std::size_t experts, std::size_t world_size)
     }
 }
 
-RoutingPlan TokenRouter::route(std::span<const Token> tokens) const {
+RoutingPlan TokenRouter::route(const Token* tokens, std::size_t token_count) const {
     RoutingPlan plan;
     plan.by_rank.resize(world_size_);
-    plan.sends.reserve(tokens.size());
+    plan.sends.reserve(token_count);
 
-    for (std::size_t token_index = 0; token_index < tokens.size(); ++token_index) {
+    for (std::size_t token_index = 0; token_index < token_count; ++token_index) {
         const Token& token = tokens[token_index];
         const std::size_t expert = token.id % expert_count_;
         const int destination = static_cast<int>(expert % world_size_);

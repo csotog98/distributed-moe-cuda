@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <span>
 #include <vector>
 
 namespace moe {
@@ -28,7 +27,7 @@ class TokenRouter {
 public:
     TokenRouter(std::size_t experts, std::size_t world_size);
 
-    RoutingPlan route(std::span<const Token> tokens) const;
+    RoutingPlan route(const Token* tokens, std::size_t token_count) const;
     std::size_t expert_count() const noexcept { return expert_count_; }
     std::size_t world_size() const noexcept { return world_size_; }
 
