@@ -11,7 +11,7 @@ set(CMAKE_CUDA_ARCHITECTURES 75 CACHE STRING "CUDA architectures for RTX 2060 an
 # 75 pq tengo una rtx2060
 
 add_library(moe_core
-    src/vector_index.cpp
+    src/token_router.cpp
 )
 target_include_directories(moe_core PUBLIC include)
 target_compile_features(moe_core PUBLIC cxx_std_20)
@@ -22,7 +22,7 @@ target_link_libraries(moe_demo PRIVATE moe_core)
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(moe_tests tests/test_vector_index.cpp)
+    add_executable(moe_tests tests/test_token_router.cpp)
     target_link_libraries(moe_tests PRIVATE moe_core)
     add_test(NAME moe_tests COMMAND moe_tests)
 endif()
