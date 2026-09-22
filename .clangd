@@ -6,6 +6,7 @@ CompileFlags:
     - "*.rsp"
     - "--generate-code=*"
   Add:
+    - -std=c++20
     - -x
     - cuda
     - --cuda-path=/opt/cuda
