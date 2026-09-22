@@ -86,12 +86,16 @@ CudaNcclTransport::~CudaNcclTransport() {
     }
 }
 
-void CudaNcclTransport::exchange_async(std::span<const float> send_buffer,
-                                       std::span<const int> send_counts,
-                                       std::span<const int> receive_counts,
-                                       std::span<float> receive_buffer) {
-    if (send_counts.size() != static_cast<std::size_t>(impl_->config.world_size) ||
-        receive_counts.size() != static_cast<std::size_t>(impl_->config.world_size)) {
+void CudaNcclTransport::exchange_async(const float* send_buffer,
+                                       std::size_t send_size,
+                                       const int* send_counts,
+                                       std::size_t send_counts_size,
+                                       const int* receive_counts,
+                                       std::size_t receive_counts_size,
+                                       float* receive_buffer,
+                                       std::size_t receive_size) {
+    if (send_counts_size != static_cast<std::size_t>(impl_->config.world_size) ||
+        receive_counts_size != static_cast<std::size_t>(impl_->config.world_size)) {
         throw std::invalid_argument("send_counts and receive_counts must contain one count per rank");
     }
 
@@ -101,8 +105,8 @@ void CudaNcclTransport::exchange_async(std::span<const float> send_buffer,
     for (int peer = 0; peer < impl_->config.world_size; ++peer) {
         const std::size_t send_elements = static_cast<std::size_t>(send_counts[peer]);
         const std::size_t receive_elements = static_cast<std::size_t>(receive_counts[peer]);
-        if (send_offset + send_elements > send_buffer.size() ||
-            receive_offset + receive_elements > receive_buffer.size()) {
+        if (send_offset + send_elements > send_size ||
+            receive_offset + receive_elements > receive_size) {
             ncclGroupEnd();
             throw std::invalid_argument("NCCL count exceeds a supplied buffer");
         }
@@ -112,17 +116,17 @@ void CudaNcclTransport::exchange_async(std::span<const float> send_buffer,
                 throw std::invalid_argument("local exchange requires matching send and receive counts");
             }
             if (send_elements != 0) {
-                check_cuda(cudaMemcpyAsync(receive_buffer.data() + receive_offset,
-                                           send_buffer.data() + send_offset,
+                check_cuda(cudaMemcpyAsync(receive_buffer + receive_offset,
+                                           send_buffer + send_offset,
                                            send_elements * sizeof(float), cudaMemcpyDeviceToDevice,
                                            impl_->communication_stream), "cudaMemcpyAsync local exchange");
             }
         } else if (send_elements != 0) {
-            check_nccl(ncclSend(send_buffer.data() + send_offset, send_elements, ncclFloat32, peer,
+            check_nccl(ncclSend(send_buffer + send_offset, send_elements, ncclFloat32, peer,
                                 impl_->communicator, impl_->communication_stream), "ncclSend");
         }
         if (peer != impl_->config.rank && receive_elements != 0) {
-            check_nccl(ncclRecv(receive_buffer.data() + receive_offset, receive_elements, ncclFloat32, peer,
+            check_nccl(ncclRecv(receive_buffer + receive_offset, receive_elements, ncclFloat32, peer,
                                 impl_->communicator, impl_->communication_stream), "ncclRecv");
         }
         send_offset += send_elements;

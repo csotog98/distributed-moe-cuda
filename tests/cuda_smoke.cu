@@ -49,10 +49,10 @@ int main() {
         {
             moe::CudaNcclTransport transport({rank, world_size, 1, communicator});
             const int element_count = static_cast<int>(elements);
-            transport.exchange_async(std::span<const float>(send_device, elements),
-                                     std::span<const int>(&element_count, 1),
-                                     std::span<const int>(&element_count, 1),
-                                     std::span<float>(receive_device, elements));
+            transport.exchange_async(send_device, elements,
+                                     &element_count, 1,
+                                     &element_count, 1,
+                                     receive_device, elements);
             transport.synchronize();
         }
 
