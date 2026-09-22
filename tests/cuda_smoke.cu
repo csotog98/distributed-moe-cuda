@@ -27,7 +27,7 @@ void check_nccl(ncclResult_t status, const char* operation) {
 int main() {
     try {
         constexpr int rank = 0;
-        constexpr int world_size = 1;
+        constexpr int total_gpus = 1;
         constexpr std::size_t elements = 4;
 
         check_cuda(cudaSetDevice(rank), "cudaSetDevice");
@@ -35,7 +35,7 @@ int main() {
         ncclUniqueId unique_id{};
         check_nccl(ncclGetUniqueId(&unique_id), "ncclGetUniqueId");
         ncclComm_t communicator{};
-        check_nccl(ncclCommInitRank(&communicator, world_size, unique_id, rank), "ncclCommInitRank");
+        check_nccl(ncclCommInitRank(&communicator, total_gpus, unique_id, rank), "ncclCommInitRank");
 
         float* send_device = nullptr;
         float* receive_device = nullptr;
@@ -47,7 +47,7 @@ int main() {
                    "cudaMemcpy H2D");
 
         {
-            moe::CudaNcclTransport transport({rank, world_size, 1, communicator});
+            moe::CudaNcclTransport transport({rank, total_gpus, 1, communicator});
             const int element_count = static_cast<int>(elements);
             transport.exchange_async(send_device, elements,
                                      &element_count, 1,

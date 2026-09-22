@@ -25,15 +25,15 @@ struct RoutingPlan {
 
 class TokenRouter {
 public:
-    TokenRouter(std::size_t experts, std::size_t world_size);
+    TokenRouter(std::size_t experts, std::size_t total_gpus);
 
     RoutingPlan route(const Token* tokens, std::size_t token_count) const;
     std::size_t expert_count() const noexcept { return expert_count_; }
-    std::size_t world_size() const noexcept { return world_size_; }
+    std::size_t total_gpus() const noexcept { return total_gpus_; }
 
 private:
     std::size_t expert_count_;
-    std::size_t world_size_;
+    std::size_t total_gpus_;
 };
 
 }  // namespace moe

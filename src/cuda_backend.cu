@@ -94,15 +94,15 @@ void CudaNcclTransport::exchange_async(const float* send_buffer,
                                        std::size_t receive_counts_size,
                                        float* receive_buffer,
                                        std::size_t receive_size) {
-    if (send_counts_size != static_cast<std::size_t>(impl_->config.world_size) ||
-        receive_counts_size != static_cast<std::size_t>(impl_->config.world_size)) {
+    if (send_counts_size != static_cast<std::size_t>(impl_->config.total_gpus) ||
+        receive_counts_size != static_cast<std::size_t>(impl_->config.total_gpus)) {
         throw std::invalid_argument("send_counts and receive_counts must contain one count per rank");
     }
 
     std::size_t send_offset = 0;
     std::size_t receive_offset = 0;
     check_nccl(ncclGroupStart(), "ncclGroupStart");
-    for (int peer = 0; peer < impl_->config.world_size; ++peer) {
+    for (int peer = 0; peer < impl_->config.total_gpus; ++peer) {
         const std::size_t send_elements = static_cast<std::size_t>(send_counts[peer]);
         const std::size_t receive_elements = static_cast<std::size_t>(receive_counts[peer]);
         if (send_offset + send_elements > send_size ||

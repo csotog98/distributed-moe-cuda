@@ -6,7 +6,7 @@ namespace moe {
 
 struct CudaTransportConfig {
     int rank{};
-    int world_size{1};
+    int total_gpus{1};
     std::size_t hidden_size{};
     void* nccl_communicator{};
 };
