@@ -169,6 +169,67 @@ int main(int argc, char** argv) {
             moe::CudaNcclTransport transport({rank, total_gpus, 1, communicator});
             transport.exchange_transfer_batch(transfer_batch);
             std::cout << "[rank " << rank << "] after transport.exchange_transfer_batch\n" << std::flush;
+
+            moe::TransferBatch return_batch;
+            return_batch.send_counts.resize(static_cast<std::size_t>(total_gpus), 0);
+            return_batch.receive_counts.resize(static_cast<std::size_t>(total_gpus), 0);
+            return_batch.send_offsets.resize(static_cast<std::size_t>(total_gpus), 0);
+            return_batch.receive_offsets.resize(static_cast<std::size_t>(total_gpus), 0);
+
+            for (const auto& routed : distributed_plan.received_tokens_by_rank[static_cast<std::size_t>(rank)]) {
+                ++return_batch.send_counts[static_cast<std::size_t>(routed.source_rank)];
+            }
+            for (std::size_t source_rank = 0; source_rank < static_cast<std::size_t>(total_gpus); ++source_rank) {
+                return_batch.receive_counts[source_rank] =
+                    static_cast<int>(distributed_plan.per_rank[source_rank].send_counts[static_cast<std::size_t>(rank)] /
+                                     static_cast<int>(elements));
+            }
+
+            std::size_t send_size = 0;
+            std::size_t receive_size = 0;
+            for (std::size_t peer = 0; peer < static_cast<std::size_t>(total_gpus); ++peer) {
+                return_batch.send_offsets[peer] = send_size;
+                return_batch.receive_offsets[peer] = receive_size;
+                send_size += static_cast<std::size_t>(return_batch.send_counts[peer]);
+                receive_size += static_cast<std::size_t>(return_batch.receive_counts[peer]);
+            }
+            return_batch.send_buffer.resize(send_size, 0.0F);
+            return_batch.receive_buffer.resize(receive_size, 0.0F);
+
+            std::vector<std::size_t> output_cursors = return_batch.send_offsets;
+            std::size_t received_offset = 0;
+            for (const auto& routed : distributed_plan.received_tokens_by_rank[static_cast<std::size_t>(rank)]) {
+                float output = 0.0F;
+                for (std::size_t index = 0; index < elements; ++index) {
+                    output += transfer_batch.receive_buffer[received_offset + index];
+                }
+                received_offset += elements;
+                const std::size_t destination = static_cast<std::size_t>(routed.source_rank);
+                return_batch.send_buffer[output_cursors[destination]++] = output;
+            }
+
+            std::cout << "[rank " << rank << "] before return exchange_transfer_batch\n" << std::flush;
+            transport.exchange_transfer_batch(return_batch);
+            std::cout << "[rank " << rank << "] after return exchange_transfer_batch\n" << std::flush;
+
+            std::vector<float> expected_return;
+            for (std::size_t source_rank = 0; source_rank < static_cast<std::size_t>(total_gpus); ++source_rank) {
+                for (const auto& token : tokens_by_rank[source_rank]) {
+                    const std::size_t destination = static_cast<std::size_t>(
+                        router.route_token_topk(token, 1).front().expert_id % static_cast<std::size_t>(total_gpus));
+                    if (destination != static_cast<std::size_t>(rank)) {
+                        continue;
+                    }
+                    float output = 0.0F;
+                    for (const float value : token.hidden) {
+                        output += value;
+                    }
+                    expected_return.push_back(output);
+                }
+            }
+            if (return_batch.receive_buffer != expected_return) {
+                throw std::runtime_error("NCCL return exchange returned unexpected data");
+            }
         }
 
         const std::vector<float>& output = transfer_batch.receive_buffer;
