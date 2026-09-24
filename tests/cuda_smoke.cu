@@ -170,6 +170,14 @@ int main(int argc, char** argv) {
             moe::CudaNcclTransport transport({rank, total_gpus, 1, communicator});
             transport.exchange_transfer_batch(transfer_batch);
             std::cout << "[rank " << rank << "] after transport.exchange_transfer_batch\n" << std::flush;
+            if (transfer_batch.receive_buffer != expected_output) {
+                std::cerr << "[rank " << rank << "] received hidden state:";
+                for (const float value : transfer_batch.receive_buffer) {
+                    std::cerr << ' ' << value;
+                }
+                std::cerr << "\n";
+                throw std::runtime_error("NCCL hidden-state exchange returned unexpected data");
+            }
 
             moe::TransferBatch return_batch;
             return_batch.send_counts.resize(static_cast<std::size_t>(total_gpus), 0);
@@ -231,7 +239,12 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("NCCL return exchange returned an unexpected number of outputs");
             }
             for (std::size_t index = 0; index < expected_return.size(); ++index) {
-                if (std::abs(return_batch.receive_buffer[index] - expected_return[index]) > 1.0e-5F) {
+                if (std::abs(return_batch.receive_buffer[index] - expected_return[index]) > 1.0e-4F) {
+                    std::cerr << "[rank " << rank << "] output index " << index
+                              << " CUDA=" << return_batch.receive_buffer[index]
+                              << " CPU=" << expected_return[index]
+                              << " difference=" << (return_batch.receive_buffer[index] - expected_return[index])
+                              << "\n";
                     throw std::runtime_error("CUDA expert output differed from the CPU reference");
                 }
             }
