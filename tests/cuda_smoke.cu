@@ -224,16 +224,9 @@ int main(int argc, char** argv) {
 
             moe::ExpertLayer expected_layer(elements, 4);
             std::vector<float> expected_return;
-            for (std::size_t source_rank = 0; source_rank < static_cast<std::size_t>(total_gpus); ++source_rank) {
-                for (const auto& token : tokens_by_rank[source_rank]) {
-                    const std::size_t destination = static_cast<std::size_t>(
-                        router.route_token_topk(token, 1).front().expert_id % static_cast<std::size_t>(total_gpus));
-                    if (destination != static_cast<std::size_t>(rank)) {
-                        continue;
-                    }
+            for (const auto& token : tokens_by_rank[static_cast<std::size_t>(rank)]) {
                     const auto expert_id = router.route_token_topk(token, 1).front().expert_id;
                     expected_return.push_back(expected_layer.forward(token, expert_id).front());
-                }
             }
             if (return_batch.receive_buffer.size() != expected_return.size()) {
                 throw std::runtime_error("NCCL return exchange returned an unexpected number of outputs");
