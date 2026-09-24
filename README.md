@@ -15,17 +15,19 @@ What is already implemented and validated:
 - rank dispatch planning
 - microbatch grouping
 - transfer buffers and transfer batches
+- destination-ordered transfer packing with stable offsets
 - communication-plan modeling
 - all-to-all exchange planning
 - expert sharding model
 - multi-rank execution context and merged outputs
-- CUDA/NCCL transport smoke validation on a single GPU
+- CUDA/NCCL communicator validation across two ranks
+- real two-GPU peer-to-peer NCCL exchange validation on RTX 5060 Ti hardware
 
 What is still to be proven in real hardware:
 
-- true multi-GPU execution on 2+ GPUs
 - NCCL async scheduling across multiple ranks
 - real expert-parallel execution with weight shards
+- connecting the router's transfer batches to the CUDA transport in a full MoE pass
 - full performance and throughput benchmarking
 
 This is a serious engineering prototype, not a finished production inference engine.
@@ -125,7 +127,7 @@ The project has been validated on the current machine through:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j2 && ./build/moe_tests && ./build/moe_demo && ./build/moe_cuda_smoke 0 1
 ```
 
-This produced a successful build and a passing CUDA smoke test, which confirms that the code is structurally valid and that the GPU transport layer functions correctly in the available single-GPU environment.
+This produces a successful build and passing CPU and CUDA smoke tests. The two-rank NCCL smoke test has also been run on a remote host with two RTX 5060 Ti GPUs, where both ranks completed a real peer-to-peer exchange.
 
 ## Important reality check
 
@@ -135,13 +137,12 @@ The current state is best described as:
 
 - a working distributed MoE runtime model
 - a valid CPU baseline
-- a single-GPU CUDA/NCCL transport smoke validation
+- a CUDA/NCCL transport layer validated with a real two-rank peer exchange
 - a strong starting point for true multi-GPU deployment
 
 To reach the next stage, the project needs:
 
-- a 2+ GPU machine or rented cloud GPU environment
-- real NCCL communicator setup for multiple ranks
+- a 2+ GPU machine for repeated runtime validation
 - true all-to-all communication beyond the modeled plan
 - optimized expert execution and batching in CUDA
 
@@ -149,11 +150,11 @@ To reach the next stage, the project needs:
 
 The next realistic milestones are:
 
-1. two-GPU runtime validation on real hardware
-2. asynchronous NCCL communication across ranks
-3. expert-parallel execution with real sharded weights
-4. benchmarking and scaling analysis
-5. documentation and production-oriented cleanup
+1. connect `TransferBatch` packing to the NCCL transport
+2. execute local experts on received hidden states
+3. reconstruct and validate the distributed MoE output
+4. benchmark asynchronous communication and expert execution
+5. production-oriented cleanup and scaling analysis
 
 ## License
 

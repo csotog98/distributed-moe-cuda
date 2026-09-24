@@ -255,22 +255,18 @@ TransferBatch TokenRouter::build_transfer_batch(const Token* tokens,
         receive_offset += static_cast<std::size_t>(batch.receive_counts[rank]);
     }
 
-    batch.send_buffer.reserve(send_offset);
-    batch.receive_buffer.resize(send_offset, 0.0F);
+    batch.send_buffer.resize(send_offset, 0.0F);
+    batch.receive_buffer.resize(receive_offset, 0.0F);
+
+    std::vector<std::size_t> send_cursors = batch.send_offsets;
 
     for (std::size_t token_index = 0; token_index < token_count; ++token_index) {
         const Token& token = tokens[token_index];
         const auto top_experts = route_token_topk(token, 1);
         const std::size_t destination = static_cast<std::size_t>(top_experts.front().expert_id % total_gpus_);
-        batch.send_buffer.insert(batch.send_buffer.end(), token.hidden.begin(), token.hidden.end());
-        std::copy(token.hidden.begin(), token.hidden.end(), batch.receive_buffer.begin() + static_cast<std::ptrdiff_t>(batch.receive_offsets[destination]));
-        batch.receive_offsets[destination] += token.hidden.size();
-    }
-
-    batch.receive_buffer = batch.send_buffer;
-    batch.receive_offsets.assign(total_gpus_, 0);
-    for (std::size_t rank = 0; rank < total_gpus_; ++rank) {
-        batch.receive_offsets[rank] = batch.send_offsets[rank];
+        const std::size_t offset = send_cursors[destination];
+        std::copy(token.hidden.begin(), token.hidden.end(), batch.send_buffer.begin() + static_cast<std::ptrdiff_t>(offset));
+        send_cursors[destination] += token.hidden.size();
     }
     return batch;
 }

@@ -80,6 +80,16 @@ int main() {
     assert(transfer_batch.send_buffer.size() == same_id_but_different_hidden.size() * 3);
     assert(transfer_batch.send_offsets[0] == 0);
     assert(transfer_batch.receive_offsets[0] == 0);
+    std::vector<std::size_t> packed_offsets = transfer_batch.send_offsets;
+    for (const auto& token : same_id_but_different_hidden) {
+        const std::size_t destination = static_cast<std::size_t>(router.route_token_topk(token, 1).front().expert_id % 2);
+        for (const float value : token.hidden) {
+            assert(transfer_batch.send_buffer[packed_offsets[destination]] == value);
+            ++packed_offsets[destination];
+        }
+    }
+    assert(packed_offsets[0] == transfer_batch.send_offsets[1]);
+    assert(packed_offsets[1] == transfer_batch.send_buffer.size());
 
     moe::ExpertLayer expert_layer(3, 4);
     for (const auto& microbatch : batch_plan.microbatches) {
