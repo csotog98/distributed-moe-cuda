@@ -23,6 +23,23 @@ struct RoutingPlan {
     std::vector<std::vector<std::size_t>> by_rank;
 };
 
+class ExpertLayer {
+public:
+    ExpertLayer(std::size_t hidden_size, std::size_t expert_count);
+
+    std::size_t hidden_size() const noexcept { return hidden_size_; }
+    std::size_t expert_count() const noexcept { return expert_count_; }
+
+    std::vector<float> forward(const Token& token, std::size_t expert_id) const;
+    std::vector<float> forward(const std::vector<float>& hidden, std::size_t expert_id) const;
+
+private:
+    std::size_t hidden_size_{};
+    std::size_t expert_count_{};
+    std::vector<std::vector<float>> weights_;
+    std::vector<float> biases_;
+};
+
 class TokenRouter {
 public:
     TokenRouter(std::size_t experts, std::size_t total_gpus);
