@@ -20,6 +20,7 @@ What is already implemented and validated:
 - CPU execution and merge over rank-aware distributed transfer plans
 - receive-buffer-based expert execution in the CPU distributed baseline
 - CPU reconstruction of expert outputs back to source ranks
+- explicit CPU return-transfer plans for expert outputs
 - host-to-device and device-to-host `TransferBatch` exchange through NCCL
 - communication-plan modeling
 - all-to-all exchange planning
@@ -137,7 +138,7 @@ The project has been validated on the current machine through:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j2 && ./build/moe_tests && ./build/moe_demo && ./build/moe_cuda_smoke 0 1
 ```
 
-This produces a successful build and passing CPU and CUDA smoke tests. The high-level two-rank `TransferBatch` exchange path has now been validated on a remote host with two NVIDIA RTX A4000 GPUs, with both ranks completing the router-driven NCCL exchange.
+This produces a successful build and passing CPU and CUDA smoke tests. The high-level two-rank `TransferBatch` exchange path has now been validated on a remote host with two NVIDIA RTX A4000 GPUs, with both ranks completing the router-driven NCCL exchange. The CPU baseline also builds and validates the corresponding return-transfer plan for expert outputs.
 
 ## Important reality check
 
@@ -159,7 +160,7 @@ To reach the next stage, the project needs:
 
 The next realistic milestones are:
 
-1. add the CUDA return exchange for expert outputs
+1. connect the return-transfer plan to a second CUDA/NCCL exchange
 2. execute and validate the full distributed MoE output on two GPUs
 3. support top-k routing with weighted output combination
 4. benchmark overlapped communication and expert execution

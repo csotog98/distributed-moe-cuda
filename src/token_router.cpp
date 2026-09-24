@@ -410,6 +410,81 @@ DistributedTransferExecution TokenRouter::execute_distributed_transfer_plan(
     return execution;
 }
 
+DistributedReturnPlan TokenRouter::build_distributed_return_plan(
+    const DistributedTransferPlan& transfer_plan,
+    const DistributedTransferExecution& execution) const {
+    if (transfer_plan.per_rank.size() != total_gpus_ ||
+        transfer_plan.received_tokens_by_rank.size() != total_gpus_ ||
+        execution.expert_outputs_by_rank.size() != total_gpus_) {
+        throw std::invalid_argument("distributed return inputs do not match the router world size");
+    }
+
+    DistributedReturnPlan plan;
+    plan.per_rank.resize(total_gpus_);
+    plan.returned_tokens_by_rank.resize(total_gpus_);
+    std::vector<std::vector<int>> send_counts(total_gpus_, std::vector<int>(total_gpus_, 0));
+
+    for (std::size_t owner_rank = 0; owner_rank < total_gpus_; ++owner_rank) {
+        const auto& routed_tokens = transfer_plan.received_tokens_by_rank[owner_rank];
+        const auto& expert_outputs = execution.expert_outputs_by_rank[owner_rank];
+        if (routed_tokens.size() != expert_outputs.size()) {
+            throw std::invalid_argument("expert output count does not match received token metadata");
+        }
+        for (const RoutedToken& routed : routed_tokens) {
+            if (routed.source_rank < 0 || static_cast<std::size_t>(routed.source_rank) >= total_gpus_) {
+                throw std::out_of_range("return destination rank is out of range");
+            }
+            ++send_counts[owner_rank][static_cast<std::size_t>(routed.source_rank)];
+            plan.returned_tokens_by_rank[static_cast<std::size_t>(routed.source_rank)].push_back(routed);
+        }
+    }
+
+    for (std::size_t rank = 0; rank < total_gpus_; ++rank) {
+        TransferBatch& batch = plan.per_rank[rank];
+        batch.send_counts = send_counts[rank];
+        batch.receive_counts.resize(total_gpus_, 0);
+        batch.send_offsets.resize(total_gpus_, 0);
+        batch.receive_offsets.resize(total_gpus_, 0);
+        std::size_t send_size = 0;
+        std::size_t receive_size = 0;
+        for (std::size_t peer = 0; peer < total_gpus_; ++peer) {
+            batch.receive_counts[peer] = send_counts[peer][rank];
+            batch.send_offsets[peer] = send_size;
+            batch.receive_offsets[peer] = receive_size;
+            send_size += static_cast<std::size_t>(batch.send_counts[peer]);
+            receive_size += static_cast<std::size_t>(batch.receive_counts[peer]);
+        }
+        batch.send_buffer.resize(send_size, 0.0F);
+        batch.receive_buffer.resize(receive_size, 0.0F);
+    }
+
+    std::vector<std::vector<std::size_t>> cursors(total_gpus_);
+    for (std::size_t owner_rank = 0; owner_rank < total_gpus_; ++owner_rank) {
+        cursors[owner_rank] = plan.per_rank[owner_rank].send_offsets;
+        const auto& routed_tokens = transfer_plan.received_tokens_by_rank[owner_rank];
+        const auto& expert_outputs = execution.expert_outputs_by_rank[owner_rank];
+        for (std::size_t index = 0; index < routed_tokens.size(); ++index) {
+            const std::size_t destination = static_cast<std::size_t>(routed_tokens[index].source_rank);
+            plan.per_rank[owner_rank].send_buffer[cursors[owner_rank][destination]++] = expert_outputs[index];
+        }
+    }
+
+    for (std::size_t owner_rank = 0; owner_rank < total_gpus_; ++owner_rank) {
+        for (std::size_t source_rank = 0; source_rank < total_gpus_; ++source_rank) {
+            const TransferBatch& source_batch = plan.per_rank[owner_rank];
+            TransferBatch& destination_batch = plan.per_rank[source_rank];
+            const std::size_t count = static_cast<std::size_t>(source_batch.send_counts[source_rank]);
+            std::copy(source_batch.send_buffer.begin() +
+                          static_cast<std::ptrdiff_t>(source_batch.send_offsets[source_rank]),
+                      source_batch.send_buffer.begin() +
+                          static_cast<std::ptrdiff_t>(source_batch.send_offsets[source_rank] + count),
+                      destination_batch.receive_buffer.begin() +
+                          static_cast<std::ptrdiff_t>(destination_batch.receive_offsets[owner_rank]));
+        }
+    }
+    return plan;
+}
+
 ExpertExecutionPass TokenRouter::execute_remote_expert_pass(const Token* tokens,
                                                           std::size_t token_count,
                                                           const ExpertLayer& expert_layer,

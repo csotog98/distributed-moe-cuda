@@ -72,6 +72,11 @@ struct DistributedTransferExecution {
     std::vector<std::vector<float>> merged_outputs_by_rank;
 };
 
+struct DistributedReturnPlan {
+    std::vector<TransferBatch> per_rank;
+    std::vector<std::vector<RoutedToken>> returned_tokens_by_rank;
+};
+
 struct ExpertPreference {
     std::uint32_t expert_id{};
     float score{};
@@ -215,6 +220,9 @@ public:
         const DistributedTransferPlan& plan,
         const ExpertLayer& expert_layer,
         std::size_t top_k = 1) const;
+    DistributedReturnPlan build_distributed_return_plan(
+        const DistributedTransferPlan& transfer_plan,
+        const DistributedTransferExecution& execution) const;
     std::vector<ExpertPreference> route_token_topk(const Token& token, std::size_t top_k) const;
     ExpertExecutionPass execute_remote_expert_pass(const Token* tokens,
                                                  std::size_t token_count,

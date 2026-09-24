@@ -149,6 +149,18 @@ int main() {
     assert(distributed_execution.merged_outputs_by_rank[0][0] > 0.0F);
     assert(distributed_execution.merged_outputs_by_rank[1][0] > 0.0F);
 
+    const auto distributed_return = router.build_distributed_return_plan(distributed_transfer, distributed_execution);
+    assert(distributed_return.per_rank.size() == 2);
+    assert(distributed_return.returned_tokens_by_rank.size() == 2);
+    assert(distributed_return.per_rank[0].send_counts[1] == 1);
+    assert(distributed_return.per_rank[1].send_counts[0] == 1);
+    assert(distributed_return.per_rank[0].receive_counts[1] == 1);
+    assert(distributed_return.per_rank[1].receive_counts[0] == 1);
+    assert(distributed_return.per_rank[0].receive_buffer.size() == 1);
+    assert(distributed_return.per_rank[1].receive_buffer.size() == 1);
+    assert(distributed_return.per_rank[0].receive_buffer[0] == distributed_execution.expert_outputs_by_rank[1][0]);
+    assert(distributed_return.per_rank[1].receive_buffer[0] == distributed_execution.expert_outputs_by_rank[0][0]);
+
     moe::ExpertLayer execution_layer(2, 4);
     const auto execution = router.execute_remote_expert_pass(tokens.data(), tokens.size(), execution_layer, 1);
     assert(execution.outputs.size() == tokens.size());
