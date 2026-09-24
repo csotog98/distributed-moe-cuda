@@ -151,21 +151,18 @@ int main(int argc, char** argv) {
         check_nccl(ncclCommInitRank(&communicator, total_gpus, unique_id, rank), "ncclCommInitRank");
         std::cout << "[rank " << rank << "] after ncclCommInitRank\n" << std::flush;
 
-        const std::vector<float> input{
-            static_cast<float>(rank * 10 + 1),
-            static_cast<float>(rank * 10 + 2),
-            static_cast<float>(rank * 10 + 3),
-            static_cast<float>(rank * 10 + 4),
-        };
-        moe::TransferBatch transfer_batch;
-        transfer_batch.send_counts.resize(static_cast<std::size_t>(total_gpus), 0);
-        transfer_batch.receive_counts.resize(static_cast<std::size_t>(total_gpus), 0);
-        transfer_batch.send_offsets.resize(static_cast<std::size_t>(total_gpus), 0);
-        transfer_batch.receive_offsets.resize(static_cast<std::size_t>(total_gpus), 0);
-        const int peer = (rank + 1) % total_gpus;
-        transfer_batch.send_counts[peer] = static_cast<int>(elements);
-        transfer_batch.receive_counts[peer] = static_cast<int>(elements);
-        transfer_batch.send_buffer = input;
+        const std::vector<float> rank_zero_input{1.0F, 2.0F, 3.0F, 4.0F};
+        const std::vector<float> rank_one_input{-1.0F, -2.0F, -3.0F, -4.0F};
+        const std::vector<std::vector<moe::Token>> tokens_by_rank = total_gpus == 1
+            ? std::vector<std::vector<moe::Token>>{{{100, rank_zero_input}}}
+            : std::vector<std::vector<moe::Token>>{{{100, rank_zero_input}}, {{101, rank_one_input}}};
+        moe::TokenRouter router(4, static_cast<std::size_t>(total_gpus));
+        const moe::DistributedTransferPlan distributed_plan =
+            router.build_distributed_transfer_plan(tokens_by_rank, elements);
+        moe::TransferBatch transfer_batch = distributed_plan.per_rank[static_cast<std::size_t>(rank)];
+        const std::vector<float>& expected_output = total_gpus == 1
+            ? rank_zero_input
+            : (rank == 0 ? rank_one_input : rank_zero_input);
 
         {
             std::cout << "[rank " << rank << "] before transport.exchange_transfer_batch\n" << std::flush;
@@ -177,12 +174,6 @@ int main(int argc, char** argv) {
         const std::vector<float>& output = transfer_batch.receive_buffer;
         check_nccl(ncclCommDestroy(communicator), "ncclCommDestroy");
 
-        const std::vector<float> expected_output{
-            static_cast<float>(peer * 10 + 1),
-            static_cast<float>(peer * 10 + 2),
-            static_cast<float>(peer * 10 + 3),
-            static_cast<float>(peer * 10 + 4),
-        };
         if (output != expected_output) {
             std::cerr << "received:";
             for (const float value : output) {
