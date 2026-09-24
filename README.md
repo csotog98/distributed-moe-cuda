@@ -16,6 +16,7 @@ What is already implemented and validated:
 - microbatch grouping
 - transfer buffers and transfer batches
 - destination-ordered transfer packing with stable offsets
+- rank-aware distributed transfer metadata and receive counts
 - host-to-device and device-to-host `TransferBatch` exchange through NCCL
 - communication-plan modeling
 - all-to-all exchange planning
@@ -28,7 +29,7 @@ What is still to be proven in the full runtime:
 
 - overlapped NCCL communication and expert execution across multiple ranks
 - real expert-parallel execution with weight shards
-- rank-local receive metadata for a full distributed routing pass
+- full distributed routing and expert execution pass using rank-local batches
 - full performance and throughput benchmarking
 
 This is a serious engineering prototype, not a finished production inference engine.
@@ -62,6 +63,7 @@ Work is grouped into small batches to match typical distributed inference patter
 ### Transfers and buffers
 Payloads are packed into transfer buffers with explicit send/receive counts and offsets so the communication layer can serialize and reconstruct the relevant hidden states.
 The CUDA backend can now move a packed `TransferBatch` through device buffers and NCCL, then return the received values to host memory.
+The router also builds rank-aware send and receive metadata from per-rank token batches.
 
 ### Communication planning
 The system models send and receive stages and an all-to-all exchange plan. This is the abstraction that later connects to NCCL collectives.
@@ -144,15 +146,14 @@ The current state is best described as:
 
 To reach the next stage, the project needs:
 
-- rank-local send/receive metadata for the router's distributed batches
-- true all-to-all token exchange driven by per-rank routing metadata
+- full all-to-all token exchange driven by rank-aware routing metadata
 - optimized expert execution and batching in CUDA
 
 ## Next milestones
 
 The next realistic milestones are:
 
-1. coordinate rank-local receive metadata for distributed batches
+1. connect rank-aware batches to the multi-rank CUDA runtime
 2. execute local experts on received hidden states
 3. reconstruct and validate the distributed MoE output
 4. benchmark overlapped communication and expert execution

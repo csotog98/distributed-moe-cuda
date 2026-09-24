@@ -59,6 +59,10 @@ struct TransferBatch {
     std::vector<float> receive_buffer;
 };
 
+struct DistributedTransferPlan {
+    std::vector<TransferBatch> per_rank;
+};
+
 struct ExpertPreference {
     std::uint32_t expert_id{};
     float score{};
@@ -194,6 +198,9 @@ public:
                                      std::size_t token_count,
                                      std::size_t hidden_size,
                                      std::size_t microbatch_size = 2) const;
+    DistributedTransferPlan build_distributed_transfer_plan(
+        const std::vector<std::vector<Token>>& tokens_by_rank,
+        std::size_t hidden_size) const;
     std::vector<ExpertPreference> route_token_topk(const Token& token, std::size_t top_k) const;
     ExpertExecutionPass execute_remote_expert_pass(const Token* tokens,
                                                  std::size_t token_count,

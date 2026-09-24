@@ -271,6 +271,62 @@ TransferBatch TokenRouter::build_transfer_batch(const Token* tokens,
     return batch;
 }
 
+DistributedTransferPlan TokenRouter::build_distributed_transfer_plan(
+    const std::vector<std::vector<Token>>& tokens_by_rank,
+    std::size_t hidden_size) const {
+    if (tokens_by_rank.size() != total_gpus_) {
+        throw std::invalid_argument("tokens_by_rank must contain one batch per rank");
+    }
+    if (hidden_size == 0) {
+        throw std::invalid_argument("hidden_size must be positive");
+    }
+
+    std::vector<std::vector<int>> send_counts(total_gpus_, std::vector<int>(total_gpus_, 0));
+    for (std::size_t source_rank = 0; source_rank < total_gpus_; ++source_rank) {
+        for (const Token& token : tokens_by_rank[source_rank]) {
+            if (token.hidden.size() != hidden_size) {
+                throw std::invalid_argument("token hidden size does not match the expected hidden_size");
+            }
+            const std::size_t destination = static_cast<std::size_t>(
+                route_token_topk(token, 1).front().expert_id % total_gpus_);
+            send_counts[source_rank][destination] += static_cast<int>(hidden_size);
+        }
+    }
+
+    DistributedTransferPlan plan;
+    plan.per_rank.resize(total_gpus_);
+    for (std::size_t rank = 0; rank < total_gpus_; ++rank) {
+        TransferBatch& batch = plan.per_rank[rank];
+        batch.send_counts = send_counts[rank];
+        batch.receive_counts.resize(total_gpus_, 0);
+        batch.send_offsets.resize(total_gpus_, 0);
+        batch.receive_offsets.resize(total_gpus_, 0);
+
+        std::size_t send_size = 0;
+        std::size_t receive_size = 0;
+        for (std::size_t peer = 0; peer < total_gpus_; ++peer) {
+            batch.receive_counts[peer] = send_counts[peer][rank];
+            batch.send_offsets[peer] = send_size;
+            batch.receive_offsets[peer] = receive_size;
+            send_size += static_cast<std::size_t>(batch.send_counts[peer]);
+            receive_size += static_cast<std::size_t>(batch.receive_counts[peer]);
+        }
+        batch.send_buffer.resize(send_size, 0.0F);
+        batch.receive_buffer.resize(receive_size, 0.0F);
+
+        std::vector<std::size_t> cursors = batch.send_offsets;
+        for (const Token& token : tokens_by_rank[rank]) {
+            const std::size_t destination = static_cast<std::size_t>(
+                route_token_topk(token, 1).front().expert_id % total_gpus_);
+            const std::size_t offset = cursors[destination];
+            std::copy(token.hidden.begin(), token.hidden.end(),
+                      batch.send_buffer.begin() + static_cast<std::ptrdiff_t>(offset));
+            cursors[destination] += token.hidden.size();
+        }
+    }
+    return plan;
+}
+
 ExpertExecutionPass TokenRouter::execute_remote_expert_pass(const Token* tokens,
                                                           std::size_t token_count,
                                                           const ExpertLayer& expert_layer,

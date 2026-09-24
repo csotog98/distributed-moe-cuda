@@ -91,6 +91,28 @@ int main() {
     assert(packed_offsets[0] == transfer_batch.send_offsets[1]);
     assert(packed_offsets[1] == transfer_batch.send_buffer.size());
 
+    const std::vector<std::vector<moe::Token>> tokens_by_rank{
+        {{10, {-1.0F, 0.0F, 0.0F}}},
+        {{11, {1.0F, 0.0F, 0.0F}}},
+    };
+    const auto distributed_transfer = router.build_distributed_transfer_plan(tokens_by_rank, 3);
+    assert(distributed_transfer.per_rank.size() == 2);
+    for (std::size_t rank = 0; rank < distributed_transfer.per_rank.size(); ++rank) {
+        const auto& rank_batch = distributed_transfer.per_rank[rank];
+        assert(rank_batch.send_counts.size() == 2);
+        assert(rank_batch.receive_counts.size() == 2);
+        assert(rank_batch.send_offsets.size() == 2);
+        assert(rank_batch.receive_offsets.size() == 2);
+         assert(rank_batch.send_buffer.size() ==
+             static_cast<std::size_t>(rank_batch.send_counts[0] + rank_batch.send_counts[1]));
+         assert(rank_batch.receive_buffer.size() ==
+             static_cast<std::size_t>(rank_batch.receive_counts[0] + rank_batch.receive_counts[1]));
+    }
+    assert(distributed_transfer.per_rank[0].send_counts[0] == 3);
+    assert(distributed_transfer.per_rank[0].receive_counts[1] == 0);
+    assert(distributed_transfer.per_rank[1].send_counts[1] == 3);
+        assert(distributed_transfer.per_rank[1].receive_counts[1] == 3);
+
     moe::ExpertLayer expert_layer(3, 4);
     for (const auto& microbatch : batch_plan.microbatches) {
         const std::size_t expert_id = static_cast<std::size_t>(router.route_token_topk(
