@@ -23,6 +23,7 @@ What is already implemented and validated:
 - explicit CPU return-transfer plans for expert outputs
 - two-stage NCCL round-trip smoke path, validated locally in one-rank mode
 - weighted top-k distributed routing and CPU output merging
+- deterministic CUDA expert kernel with CPU-reference validation in one-rank mode
 - host-to-device and device-to-host `TransferBatch` exchange through NCCL
 - communication-plan modeling
 - all-to-all exchange planning
@@ -36,7 +37,7 @@ What is still to be proven in the full runtime:
 - overlapped NCCL communication and expert execution across multiple ranks
 - real expert-parallel execution with weight shards
 - full distributed routing and expert execution pass using rank-local batches
-- full CUDA expert execution and final distributed merge on two ranks
+- full multi-rank CUDA expert execution and final distributed merge
 - full performance and throughput benchmarking
 
 This is a serious engineering prototype, not a finished production inference engine.
@@ -162,9 +163,9 @@ To reach the next stage, the project needs:
 
 The next realistic milestones are:
 
-1. validate the two-stage CUDA/NCCL round trip on two GPUs
+1. validate the CUDA expert and two-stage NCCL round trip on two GPUs
 2. execute and validate the full distributed MoE output on two GPUs
-3. add CUDA expert execution with weighted top-k output combination
+3. add CUDA expert execution for weighted top-k output combination
 4. benchmark overlapped communication and expert execution
 5. production-oriented cleanup and scaling analysis
 

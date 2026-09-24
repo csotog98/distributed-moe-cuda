@@ -3,6 +3,7 @@
 #include "token_router.hpp"
 
 #include <cstddef>
+#include <vector>
 
 namespace moe {
 
@@ -60,6 +61,24 @@ public:
                         std::size_t receive_size);
     void exchange_transfer_batch(TransferBatch& batch);
     void synchronize();
+
+private:
+    struct Impl;
+    Impl* impl_{};
+};
+
+class CudaExpertExecutor {
+public:
+    CudaExpertExecutor(std::size_t hidden_size, std::size_t expert_count);
+    ~CudaExpertExecutor();
+
+    CudaExpertExecutor(const CudaExpertExecutor&) = delete;
+    CudaExpertExecutor& operator=(const CudaExpertExecutor&) = delete;
+
+    std::vector<float> forward(const std::vector<float>& hidden, std::size_t expert_id) const;
+    std::vector<float> forward_batch(const std::vector<float>& packed_hidden,
+                                     std::size_t token_count,
+                                     std::size_t expert_id) const;
 
 private:
     struct Impl;

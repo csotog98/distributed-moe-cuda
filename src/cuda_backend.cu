@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace moe {
 namespace {
@@ -20,6 +21,26 @@ void check_nccl(ncclResult_t status, const char* operation) {
     if (status != ncclSuccess) {
         throw std::runtime_error(std::string(operation) + ": " + ncclGetErrorString(status));
     }
+}
+
+__global__ void expert_forward_kernel(const float* packed_hidden,
+                                      float* outputs,
+                                      std::size_t hidden_size,
+                                      std::size_t token_count,
+                                      std::size_t expert_id) {
+    const std::size_t token_index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (token_index >= token_count) {
+        return;
+    }
+
+    float output = 0.05F * static_cast<float>(expert_id + 1);
+    const float* hidden = packed_hidden + token_index * hidden_size;
+    for (std::size_t index = 0; index < hidden_size; ++index) {
+        const float weight = 0.1F * static_cast<float>(expert_id + 1) +
+                             0.01F * static_cast<float>(index + 1);
+        output += hidden[index] * weight;
+    }
+    outputs[token_index] = output;
 }
 
 }  // namespace
@@ -222,6 +243,66 @@ void CudaNcclTransport::exchange_transfer_batch(TransferBatch& batch) {
 
 void CudaNcclTransport::synchronize() {
     check_cuda(cudaEventSynchronize(impl_->transfer_complete), "cudaEventSynchronize");
+}
+
+struct CudaExpertExecutor::Impl {
+    std::size_t hidden_size{};
+    std::size_t expert_count{};
+};
+
+CudaExpertExecutor::CudaExpertExecutor(std::size_t hidden_size, std::size_t expert_count)
+    : impl_(new Impl{hidden_size, expert_count}) {
+    if (hidden_size == 0 || expert_count == 0) {
+        delete impl_;
+        impl_ = nullptr;
+        throw std::invalid_argument("hidden_size and expert_count must be positive");
+    }
+}
+
+CudaExpertExecutor::~CudaExpertExecutor() { delete impl_; }
+
+std::vector<float> CudaExpertExecutor::forward(const std::vector<float>& hidden, std::size_t expert_id) const {
+    return forward_batch(hidden, 1, expert_id);
+}
+
+std::vector<float> CudaExpertExecutor::forward_batch(const std::vector<float>& packed_hidden,
+                                                     std::size_t token_count,
+                                                     std::size_t expert_id) const {
+    if (expert_id >= impl_->expert_count) {
+        throw std::out_of_range("expert_id is out of range");
+    }
+    if (packed_hidden.size() != token_count * impl_->hidden_size) {
+        throw std::invalid_argument("packed hidden size does not match token_count and hidden_size");
+    }
+    if (token_count == 0) {
+        return {};
+    }
+
+    float* hidden_device = nullptr;
+    float* output_device = nullptr;
+    std::vector<float> outputs(token_count, 0.0F);
+    try {
+        check_cuda(cudaMalloc(&hidden_device, packed_hidden.size() * sizeof(float)), "cudaMalloc(expert input)");
+        check_cuda(cudaMalloc(&output_device, outputs.size() * sizeof(float)), "cudaMalloc(expert output)");
+        check_cuda(cudaMemcpy(hidden_device, packed_hidden.data(), packed_hidden.size() * sizeof(float),
+                              cudaMemcpyHostToDevice), "cudaMemcpy H2D expert input");
+
+        constexpr unsigned int threads = 128;
+        const unsigned int blocks = static_cast<unsigned int>((token_count + threads - 1) / threads);
+        expert_forward_kernel<<<blocks, threads>>>(hidden_device, output_device, impl_->hidden_size,
+                                                   token_count, expert_id);
+        check_cuda(cudaGetLastError(), "expert_forward_kernel launch");
+        check_cuda(cudaDeviceSynchronize(), "expert_forward_kernel synchronize");
+        check_cuda(cudaMemcpy(outputs.data(), output_device, outputs.size() * sizeof(float),
+                              cudaMemcpyDeviceToHost), "cudaMemcpy D2H expert output");
+    } catch (...) {
+        cudaFree(output_device);
+        cudaFree(hidden_device);
+        throw;
+    }
+    cudaFree(output_device);
+    cudaFree(hidden_device);
+    return outputs;
 }
 
 }  // namespace moe

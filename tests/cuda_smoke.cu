@@ -4,6 +4,7 @@
 #include <nccl.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -197,12 +198,13 @@ int main(int argc, char** argv) {
             return_batch.receive_buffer.resize(receive_size, 0.0F);
 
             std::vector<std::size_t> output_cursors = return_batch.send_offsets;
+            moe::CudaExpertExecutor cuda_expert(elements, 4);
             std::size_t received_offset = 0;
             for (const auto& routed : distributed_plan.received_tokens_by_rank[static_cast<std::size_t>(rank)]) {
-                float output = 0.0F;
-                for (std::size_t index = 0; index < elements; ++index) {
-                    output += transfer_batch.receive_buffer[received_offset + index];
-                }
+                const std::vector<float> hidden(
+                    transfer_batch.receive_buffer.begin() + static_cast<std::ptrdiff_t>(received_offset),
+                    transfer_batch.receive_buffer.begin() + static_cast<std::ptrdiff_t>(received_offset + elements));
+                const float output = cuda_expert.forward(hidden, routed.expert_id).front();
                 received_offset += elements;
                 const std::size_t destination = static_cast<std::size_t>(routed.source_rank);
                 return_batch.send_buffer[output_cursors[destination]++] = output;
@@ -212,6 +214,7 @@ int main(int argc, char** argv) {
             transport.exchange_transfer_batch(return_batch);
             std::cout << "[rank " << rank << "] after return exchange_transfer_batch\n" << std::flush;
 
+            moe::ExpertLayer expected_layer(elements, 4);
             std::vector<float> expected_return;
             for (std::size_t source_rank = 0; source_rank < static_cast<std::size_t>(total_gpus); ++source_rank) {
                 for (const auto& token : tokens_by_rank[source_rank]) {
@@ -220,15 +223,17 @@ int main(int argc, char** argv) {
                     if (destination != static_cast<std::size_t>(rank)) {
                         continue;
                     }
-                    float output = 0.0F;
-                    for (const float value : token.hidden) {
-                        output += value;
-                    }
-                    expected_return.push_back(output);
+                    const auto expert_id = router.route_token_topk(token, 1).front().expert_id;
+                    expected_return.push_back(expected_layer.forward(token, expert_id).front());
                 }
             }
-            if (return_batch.receive_buffer != expected_return) {
-                throw std::runtime_error("NCCL return exchange returned unexpected data");
+            if (return_batch.receive_buffer.size() != expected_return.size()) {
+                throw std::runtime_error("NCCL return exchange returned an unexpected number of outputs");
+            }
+            for (std::size_t index = 0; index < expected_return.size(); ++index) {
+                if (std::abs(return_batch.receive_buffer[index] - expected_return[index]) > 1.0e-5F) {
+                    throw std::runtime_error("CUDA expert output differed from the CPU reference");
+                }
             }
         }
 
