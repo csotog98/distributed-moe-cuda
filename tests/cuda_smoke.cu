@@ -159,18 +159,24 @@ int main(int argc, char** argv) {
             : std::vector<std::vector<moe::Token>>{{{100, rank_zero_input}}, {{101, rank_one_input}}};
         moe::TokenRouter router(4, static_cast<std::size_t>(total_gpus));
         const moe::DistributedTransferPlan distributed_plan =
-            router.build_distributed_transfer_plan(tokens_by_rank, elements);
+            router.build_distributed_transfer_plan(tokens_by_rank, elements, 2);
         moe::TransferBatch transfer_batch = distributed_plan.per_rank[static_cast<std::size_t>(rank)];
-        const std::vector<float>& expected_output = total_gpus == 1
-            ? rank_zero_input
-            : (rank == 0 ? rank_one_input : rank_zero_input);
+        std::vector<float> expected_received;
+        for (std::size_t source_rank = 0; source_rank < static_cast<std::size_t>(total_gpus); ++source_rank) {
+            for (const auto& routed : distributed_plan.received_tokens_by_rank[static_cast<std::size_t>(rank)]) {
+                if (routed.source_rank == static_cast<int>(source_rank)) {
+                    const auto& token = tokens_by_rank[source_rank][routed.token_index];
+                    expected_received.insert(expected_received.end(), token.hidden.begin(), token.hidden.end());
+                }
+            }
+        }
 
         {
             std::cout << "[rank " << rank << "] before transport.exchange_transfer_batch\n" << std::flush;
             moe::CudaNcclTransport transport({rank, total_gpus, 1, communicator});
             transport.exchange_transfer_batch(transfer_batch);
             std::cout << "[rank " << rank << "] after transport.exchange_transfer_batch\n" << std::flush;
-            if (transfer_batch.receive_buffer != expected_output) {
+            if (transfer_batch.receive_buffer != expected_received) {
                 std::cerr << "[rank " << rank << "] received hidden state:";
                 for (const float value : transfer_batch.receive_buffer) {
                     std::cerr << ' ' << value;
@@ -224,9 +230,17 @@ int main(int argc, char** argv) {
 
             moe::ExpertLayer expected_layer(elements, 4);
             std::vector<float> expected_return;
-            for (const auto& token : tokens_by_rank[static_cast<std::size_t>(rank)]) {
-                    const auto expert_id = router.route_token_topk(token, 1).front().expert_id;
-                    expected_return.push_back(expected_layer.forward(token, expert_id).front());
+            std::vector<float> merged_return(tokens_by_rank[static_cast<std::size_t>(rank)].size(), 0.0F);
+            for (std::size_t owner_rank = 0; owner_rank < static_cast<std::size_t>(total_gpus); ++owner_rank) {
+                for (const auto& routed : distributed_plan.received_tokens_by_rank[owner_rank]) {
+                    if (routed.source_rank != rank) {
+                        continue;
+                    }
+                    const auto& token = tokens_by_rank[static_cast<std::size_t>(rank)][routed.token_index];
+                    const float output = expected_layer.forward(token, routed.expert_id).front();
+                    expected_return.push_back(output);
+                    merged_return[routed.token_index] += output * routed.routing_weight;
+                }
             }
             if (return_batch.receive_buffer.size() != expected_return.size()) {
                 throw std::runtime_error("NCCL return exchange returned an unexpected number of outputs");
@@ -241,12 +255,27 @@ int main(int argc, char** argv) {
                     throw std::runtime_error("CUDA expert output differed from the CPU reference");
                 }
             }
+            std::vector<float> actual_merged(merged_return.size(), 0.0F);
+            std::size_t return_offset = 0;
+            for (std::size_t owner_rank = 0; owner_rank < static_cast<std::size_t>(total_gpus); ++owner_rank) {
+                for (const auto& routed : distributed_plan.received_tokens_by_rank[owner_rank]) {
+                    if (routed.source_rank == rank) {
+                        actual_merged[routed.token_index] +=
+                            return_batch.receive_buffer[return_offset++] * routed.routing_weight;
+                    }
+                }
+            }
+            for (std::size_t index = 0; index < actual_merged.size(); ++index) {
+                if (std::abs(actual_merged[index] - merged_return[index]) > 1.0e-4F) {
+                    throw std::runtime_error("top-k CUDA output merge differed from the CPU reference");
+                }
+            }
         }
 
         const std::vector<float>& output = transfer_batch.receive_buffer;
         check_nccl(ncclCommDestroy(communicator), "ncclCommDestroy");
 
-        if (output != expected_output) {
+        if (output != expected_received) {
             std::cerr << "received:";
             for (const float value : output) {
                 std::cerr << ' ' << value;
