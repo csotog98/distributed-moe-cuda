@@ -155,6 +155,71 @@ void CudaNcclTransport::exchange_async(const float* send_buffer,
     check_cuda(cudaEventRecord(impl_->transfer_complete, impl_->communication_stream), "cudaEventRecord");
 }
 
+void CudaNcclTransport::exchange_transfer_batch(TransferBatch& batch) {
+    const std::size_t expected_receive_size = [&batch] {
+        std::size_t size = 0;
+        for (const int count : batch.receive_counts) {
+            if (count < 0) {
+                throw std::invalid_argument("receive counts cannot be negative");
+            }
+            size += static_cast<std::size_t>(count);
+        }
+        return size;
+    }();
+
+    if (batch.send_counts.size() != static_cast<std::size_t>(impl_->config.total_gpus) ||
+        batch.receive_counts.size() != static_cast<std::size_t>(impl_->config.total_gpus) ||
+        batch.send_offsets.size() != static_cast<std::size_t>(impl_->config.total_gpus) ||
+        batch.receive_offsets.size() != static_cast<std::size_t>(impl_->config.total_gpus)) {
+        throw std::invalid_argument("TransferBatch metadata must contain one entry per rank");
+    }
+    if (batch.send_buffer.size() != [&batch] {
+            std::size_t size = 0;
+            for (const int count : batch.send_counts) {
+                if (count < 0) {
+                    throw std::invalid_argument("send counts cannot be negative");
+                }
+                size += static_cast<std::size_t>(count);
+            }
+            return size;
+        }()) {
+        throw std::invalid_argument("TransferBatch send buffer size does not match send counts");
+    }
+
+    float* send_device = nullptr;
+    float* receive_device = nullptr;
+    try {
+        if (!batch.send_buffer.empty()) {
+            check_cuda(cudaMalloc(&send_device, batch.send_buffer.size() * sizeof(float)), "cudaMalloc(send batch)");
+            check_cuda(cudaMemcpy(send_device, batch.send_buffer.data(), batch.send_buffer.size() * sizeof(float),
+                                  cudaMemcpyHostToDevice), "cudaMemcpy H2D batch");
+        }
+        if (expected_receive_size != 0) {
+            check_cuda(cudaMalloc(&receive_device, expected_receive_size * sizeof(float)), "cudaMalloc(receive batch)");
+        }
+
+        exchange_async(send_device, batch.send_buffer.size(),
+                       batch.send_counts.data(), batch.send_counts.size(),
+                       batch.receive_counts.data(), batch.receive_counts.size(),
+                       batch.send_offsets.data(), batch.receive_offsets.data(),
+                       receive_device, expected_receive_size);
+        synchronize();
+
+        batch.receive_buffer.resize(expected_receive_size);
+        if (!batch.receive_buffer.empty()) {
+            check_cuda(cudaMemcpy(batch.receive_buffer.data(), receive_device,
+                                  batch.receive_buffer.size() * sizeof(float), cudaMemcpyDeviceToHost),
+                       "cudaMemcpy D2H batch");
+        }
+    } catch (...) {
+        cudaFree(receive_device);
+        cudaFree(send_device);
+        throw;
+    }
+    cudaFree(receive_device);
+    cudaFree(send_device);
+}
+
 void CudaNcclTransport::synchronize() {
     check_cuda(cudaEventSynchronize(impl_->transfer_complete), "cudaEventSynchronize");
 }

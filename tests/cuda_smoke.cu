@@ -151,52 +151,30 @@ int main(int argc, char** argv) {
         check_nccl(ncclCommInitRank(&communicator, total_gpus, unique_id, rank), "ncclCommInitRank");
         std::cout << "[rank " << rank << "] after ncclCommInitRank\n" << std::flush;
 
-        float* send_device = nullptr;
-        float* receive_device = nullptr;
-        std::cout << "[rank " << rank << "] before cudaMalloc\n" << std::flush;
-        check_cuda(cudaMalloc(&send_device, elements * sizeof(float)), "cudaMalloc(send)");
-        check_cuda(cudaMalloc(&receive_device, elements * sizeof(float)), "cudaMalloc(receive)");
-        std::cout << "[rank " << rank << "] after cudaMalloc\n" << std::flush;
-
         const std::vector<float> input{
             static_cast<float>(rank * 10 + 1),
             static_cast<float>(rank * 10 + 2),
             static_cast<float>(rank * 10 + 3),
             static_cast<float>(rank * 10 + 4),
         };
-        std::cout << "[rank " << rank << "] before cudaMemcpy H2D\n" << std::flush;
-        check_cuda(cudaMemcpy(send_device, input.data(), input.size() * sizeof(float), cudaMemcpyHostToDevice),
-                   "cudaMemcpy H2D");
-        std::cout << "[rank " << rank << "] after cudaMemcpy H2D\n" << std::flush;
-
-        std::vector<int> send_counts(static_cast<std::size_t>(total_gpus), 0);
-        std::vector<int> receive_counts(static_cast<std::size_t>(total_gpus), 0);
-        std::vector<std::size_t> send_offsets(static_cast<std::size_t>(total_gpus), 0);
-        std::vector<std::size_t> receive_offsets(static_cast<std::size_t>(total_gpus), 0);
+        moe::TransferBatch transfer_batch;
+        transfer_batch.send_counts.resize(static_cast<std::size_t>(total_gpus), 0);
+        transfer_batch.receive_counts.resize(static_cast<std::size_t>(total_gpus), 0);
+        transfer_batch.send_offsets.resize(static_cast<std::size_t>(total_gpus), 0);
+        transfer_batch.receive_offsets.resize(static_cast<std::size_t>(total_gpus), 0);
         const int peer = (rank + 1) % total_gpus;
-        send_counts[peer] = static_cast<int>(elements);
-        receive_counts[peer] = static_cast<int>(elements);
+        transfer_batch.send_counts[peer] = static_cast<int>(elements);
+        transfer_batch.receive_counts[peer] = static_cast<int>(elements);
+        transfer_batch.send_buffer = input;
 
         {
-            std::cout << "[rank " << rank << "] before transport.exchange_async\n" << std::flush;
+            std::cout << "[rank " << rank << "] before transport.exchange_transfer_batch\n" << std::flush;
             moe::CudaNcclTransport transport({rank, total_gpus, 1, communicator});
-            transport.exchange_async(send_device, elements,
-                                     send_counts.data(), send_counts.size(),
-                                     receive_counts.data(), receive_counts.size(),
-                                     send_offsets.data(), receive_offsets.data(),
-                                     receive_device, elements);
-            std::cout << "[rank " << rank << "] before transport.synchronize\n" << std::flush;
-            transport.synchronize();
-            std::cout << "[rank " << rank << "] after transport.synchronize\n" << std::flush;
+            transport.exchange_transfer_batch(transfer_batch);
+            std::cout << "[rank " << rank << "] after transport.exchange_transfer_batch\n" << std::flush;
         }
 
-        std::vector<float> output(elements);
-        std::cout << "[rank " << rank << "] before cudaMemcpy D2H\n" << std::flush;
-        check_cuda(cudaMemcpy(output.data(), receive_device, output.size() * sizeof(float), cudaMemcpyDeviceToHost),
-                   "cudaMemcpy D2H");
-        std::cout << "[rank " << rank << "] after cudaMemcpy D2H\n" << std::flush;
-        check_cuda(cudaFree(send_device), "cudaFree(send)");
-        check_cuda(cudaFree(receive_device), "cudaFree(receive)");
+        const std::vector<float>& output = transfer_batch.receive_buffer;
         check_nccl(ncclCommDestroy(communicator), "ncclCommDestroy");
 
         const std::vector<float> expected_output{

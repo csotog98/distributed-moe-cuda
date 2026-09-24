@@ -1,5 +1,7 @@
 #pragma once
 
+#include "token_router.hpp"
+
 #include <cstddef>
 
 namespace moe {
@@ -56,6 +58,7 @@ public:
                         const std::size_t* receive_offsets,
                         float* receive_buffer,
                         std::size_t receive_size);
+    void exchange_transfer_batch(TransferBatch& batch);
     void synchronize();
 
 private:

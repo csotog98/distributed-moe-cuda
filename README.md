@@ -16,6 +16,7 @@ What is already implemented and validated:
 - microbatch grouping
 - transfer buffers and transfer batches
 - destination-ordered transfer packing with stable offsets
+- host-to-device and device-to-host `TransferBatch` exchange through NCCL
 - communication-plan modeling
 - all-to-all exchange planning
 - expert sharding model
@@ -27,7 +28,7 @@ What is still to be proven in the full runtime:
 
 - overlapped NCCL communication and expert execution across multiple ranks
 - real expert-parallel execution with weight shards
-- connecting the router's transfer batches to the CUDA transport in a full MoE pass
+- rank-local receive metadata for a full distributed routing pass
 - full performance and throughput benchmarking
 
 This is a serious engineering prototype, not a finished production inference engine.
@@ -60,6 +61,7 @@ Work is grouped into small batches to match typical distributed inference patter
 
 ### Transfers and buffers
 Payloads are packed into transfer buffers with explicit send/receive counts and offsets so the communication layer can serialize and reconstruct the relevant hidden states.
+The CUDA backend can now move a packed `TransferBatch` through device buffers and NCCL, then return the received values to host memory.
 
 ### Communication planning
 The system models send and receive stages and an all-to-all exchange plan. This is the abstraction that later connects to NCCL collectives.
@@ -127,7 +129,7 @@ The project has been validated on the current machine through:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j2 && ./build/moe_tests && ./build/moe_demo && ./build/moe_cuda_smoke 0 1
 ```
 
-This produces a successful build and passing CPU and CUDA smoke tests. The two-rank NCCL smoke test has also been run on a remote host with two RTX 5060 Ti GPUs, where both ranks completed a real peer-to-peer exchange.
+This produces a successful build and passing CPU and CUDA smoke tests. The low-level two-rank NCCL exchange has also been run on a remote host with two RTX 5060 Ti GPUs. The new high-level `TransferBatch` exchange path is currently validated locally in one-rank mode and is ready for the next two-GPU run.
 
 ## Important reality check
 
@@ -142,7 +144,7 @@ The current state is best described as:
 
 To reach the next stage, the project needs:
 
-- integration of the router's packed batches with the NCCL transport
+- rank-local send/receive metadata for the router's distributed batches
 - true all-to-all token exchange driven by per-rank routing metadata
 - optimized expert execution and batching in CUDA
 
@@ -150,10 +152,10 @@ To reach the next stage, the project needs:
 
 The next realistic milestones are:
 
-1. connect `TransferBatch` packing to the NCCL transport
+1. coordinate rank-local receive metadata for distributed batches
 2. execute local experts on received hidden states
 3. reconstruct and validate the distributed MoE output
-4. benchmark asynchronous communication and expert execution
+4. benchmark overlapped communication and expert execution
 5. production-oriented cleanup and scaling analysis
 
 ## License
