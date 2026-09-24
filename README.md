@@ -19,6 +19,7 @@ What is already implemented and validated:
 - rank-aware distributed transfer metadata and receive counts
 - CPU execution and merge over rank-aware distributed transfer plans
 - receive-buffer-based expert execution in the CPU distributed baseline
+- CPU reconstruction of expert outputs back to source ranks
 - host-to-device and device-to-host `TransferBatch` exchange through NCCL
 - communication-plan modeling
 - all-to-all exchange planning
@@ -32,6 +33,7 @@ What is still to be proven in the full runtime:
 - overlapped NCCL communication and expert execution across multiple ranks
 - real expert-parallel execution with weight shards
 - full distributed routing and expert execution pass using rank-local batches
+- CUDA return exchange for expert outputs and final distributed merge
 - full performance and throughput benchmarking
 
 This is a serious engineering prototype, not a finished production inference engine.
@@ -65,7 +67,7 @@ Work is grouped into small batches to match typical distributed inference patter
 ### Transfers and buffers
 Payloads are packed into transfer buffers with explicit send/receive counts and offsets so the communication layer can serialize and reconstruct the relevant hidden states.
 The CUDA backend can now move a packed `TransferBatch` through device buffers and NCCL, then return the received values to host memory.
-The router also builds rank-aware send and receive metadata from per-rank token batches. The CPU baseline simulates the exchange into receive buffers before executing the destination experts, preserving the same data flow expected from NCCL.
+The router also builds rank-aware send and receive metadata from per-rank token batches. The CPU baseline simulates the exchange into receive buffers before executing the destination experts, then reconstructs expert outputs back at the source ranks. This preserves the data flow expected from NCCL while leaving the CUDA return exchange as a remaining step.
 
 ### Communication planning
 The system models send and receive stages and an all-to-all exchange plan. This is the abstraction that later connects to NCCL collectives.
@@ -157,9 +159,9 @@ To reach the next stage, the project needs:
 
 The next realistic milestones are:
 
-1. connect rank-aware batches to the multi-rank CUDA runtime
-2. execute local experts on received hidden states
-3. reconstruct and validate the distributed MoE output
+1. add the CUDA return exchange for expert outputs
+2. execute and validate the full distributed MoE output on two GPUs
+3. support top-k routing with weighted output combination
 4. benchmark overlapped communication and expert execution
 5. production-oriented cleanup and scaling analysis
 

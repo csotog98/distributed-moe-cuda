@@ -67,6 +67,8 @@ struct DistributedTransferPlan {
 };
 
 struct DistributedTransferExecution {
+    std::vector<std::vector<float>> expert_outputs_by_rank;
+    std::vector<std::vector<float>> returned_outputs_by_rank;
     std::vector<std::vector<float>> merged_outputs_by_rank;
 };
 

@@ -137,6 +137,12 @@ int main() {
 
     const auto distributed_execution = router.execute_distributed_transfer_plan(
         tokens_by_rank, distributed_transfer, expert_layer, 1);
+    assert(distributed_execution.expert_outputs_by_rank.size() == 2);
+    assert(distributed_execution.expert_outputs_by_rank[0].size() == 1);
+    assert(distributed_execution.expert_outputs_by_rank[1].size() == 1);
+    assert(distributed_execution.returned_outputs_by_rank.size() == 2);
+    assert(distributed_execution.returned_outputs_by_rank[0].size() == 1);
+    assert(distributed_execution.returned_outputs_by_rank[1].size() == 1);
     assert(distributed_execution.merged_outputs_by_rank.size() == 2);
     assert(distributed_execution.merged_outputs_by_rank[0].size() == 1);
     assert(distributed_execution.merged_outputs_by_rank[1].size() == 1);

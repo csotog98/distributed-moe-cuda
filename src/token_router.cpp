@@ -367,8 +367,11 @@ DistributedTransferExecution TokenRouter::execute_distributed_transfer_plan(
     }
 
     DistributedTransferExecution execution;
+    execution.expert_outputs_by_rank.resize(total_gpus_);
+    execution.returned_outputs_by_rank.resize(total_gpus_);
     execution.merged_outputs_by_rank.resize(total_gpus_);
     for (std::size_t source_rank = 0; source_rank < total_gpus_; ++source_rank) {
+        execution.returned_outputs_by_rank[source_rank].resize(tokens_by_rank[source_rank].size(), 0.0F);
         execution.merged_outputs_by_rank[source_rank].resize(tokens_by_rank[source_rank].size(), 0.0F);
     }
 
@@ -397,10 +400,13 @@ DistributedTransferExecution TokenRouter::execute_distributed_transfer_plan(
                 transfer.receive_buffer.begin() + static_cast<std::ptrdiff_t>(receive_offset),
                 transfer.receive_buffer.begin() + static_cast<std::ptrdiff_t>(receive_offset + expert_layer.hidden_size()));
             const auto output = expert_layer.forward(hidden, routed.expert_id);
-            execution.merged_outputs_by_rank[source_rank][routed.token_index] = output.front();
+            execution.expert_outputs_by_rank[destination].push_back(output.front());
+            execution.returned_outputs_by_rank[source_rank][routed.token_index] = output.front();
             receive_offset += expert_layer.hidden_size();
         }
     }
+
+    execution.merged_outputs_by_rank = execution.returned_outputs_by_rank;
     return execution;
 }
 
