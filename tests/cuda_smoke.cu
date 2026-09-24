@@ -24,12 +24,37 @@ void check_nccl(ncclResult_t status, const char* operation) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
-        constexpr int rank = 0;
-        constexpr int total_gpus = 1;
-        constexpr std::size_t elements = 4;
+        int rank = 0;
+        int total_gpus = 1;
+        if (argc > 1) {
+            rank = std::stoi(argv[1]);
+        }
+        if (argc > 2) {
+            total_gpus = std::stoi(argv[2]);
+        }
 
+        if (total_gpus <= 0) {
+            throw std::invalid_argument("total_gpus must be positive");
+        }
+        if (rank < 0 || rank >= total_gpus) {
+            throw std::invalid_argument("rank must be in [0, total_gpus)");
+        }
+
+        int device_count = 0;
+        check_cuda(cudaGetDeviceCount(&device_count), "cudaGetDeviceCount");
+        if (device_count == 0) {
+            std::cout << "CUDA smoke test skipped: no CUDA-capable device detected\n";
+            return EXIT_SUCCESS;
+        }
+        if (total_gpus > device_count) {
+            std::cout << "CUDA smoke test skipped: requested " << total_gpus
+                      << " ranks but only " << device_count << " CUDA devices are available\n";
+            return EXIT_SUCCESS;
+        }
+
+        constexpr std::size_t elements = 4;
         check_cuda(cudaSetDevice(rank), "cudaSetDevice");
 
         ncclUniqueId unique_id{};
@@ -46,12 +71,19 @@ int main() {
         check_cuda(cudaMemcpy(send_device, input.data(), input.size() * sizeof(float), cudaMemcpyHostToDevice),
                    "cudaMemcpy H2D");
 
+        std::vector<int> send_counts(static_cast<std::size_t>(total_gpus), 0);
+        std::vector<int> receive_counts(static_cast<std::size_t>(total_gpus), 0);
+        std::vector<std::size_t> send_offsets(static_cast<std::size_t>(total_gpus), 0);
+        std::vector<std::size_t> receive_offsets(static_cast<std::size_t>(total_gpus), 0);
+        send_counts[rank] = static_cast<int>(elements);
+        receive_counts[rank] = static_cast<int>(elements);
+
         {
             moe::CudaNcclTransport transport({rank, total_gpus, 1, communicator});
-            const int element_count = static_cast<int>(elements);
             transport.exchange_async(send_device, elements,
-                                     &element_count, 1,
-                                     &element_count, 1,
+                                     send_counts.data(), send_counts.size(),
+                                     receive_counts.data(), receive_counts.size(),
+                                     send_offsets.data(), receive_offsets.data(),
                                      receive_device, elements);
             transport.synchronize();
         }
@@ -71,7 +103,8 @@ int main() {
             std::cerr << '\n';
             throw std::runtime_error("NCCL smoke test returned unexpected data");
         }
-        std::cout << "NCCL CUDA smoke test passed on rank 0\n";
+
+        std::cout << "NCCL CUDA smoke test passed on rank " << rank << " with " << total_gpus << " ranks\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << "NCCL CUDA smoke test failed: " << error.what() << '\n';

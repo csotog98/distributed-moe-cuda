@@ -46,6 +46,16 @@ public:
                         std::size_t receive_counts_size,
                         float* receive_buffer,
                         std::size_t receive_size);
+    void exchange_async(const float* send_buffer,
+                        std::size_t send_size,
+                        const int* send_counts,
+                        std::size_t send_counts_size,
+                        const int* receive_counts,
+                        std::size_t receive_counts_size,
+                        const std::size_t* send_offsets,
+                        const std::size_t* receive_offsets,
+                        float* receive_buffer,
+                        std::size_t receive_size);
     void synchronize();
 
 private:
