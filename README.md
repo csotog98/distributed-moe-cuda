@@ -105,6 +105,8 @@ ctest --test-dir build --output-on-failure
 ./build/moe_demo
 ```
 
+The demo prints both the CPU routing pipeline and a two-rank distributed transfer example, including per-rank send/receive counts and merged expert outputs.
+
 ### Requirements
 
 For the CPU-only path:

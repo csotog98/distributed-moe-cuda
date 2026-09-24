@@ -105,5 +105,36 @@ int main() {
                   << "\n";
     }
 
+    const std::vector<std::vector<moe::Token>> tokens_by_rank{
+        {{100, {1.0F, 2.0F, 3.0F}}},
+        {{101, {-1.0F, -2.0F, -3.0F}}},
+    };
+    const auto distributed_transfer = router.build_distributed_transfer_plan(tokens_by_rank, hidden_size);
+    const auto distributed_execution = router.execute_distributed_transfer_plan(
+        tokens_by_rank, distributed_transfer, expert_layer, 1);
+
+    std::cout << "distributed transfer plan:\n";
+    for (std::size_t rank = 0; rank < distributed_transfer.per_rank.size(); ++rank) {
+        const auto& transfer = distributed_transfer.per_rank[rank];
+        std::cout << " rank " << rank << " sends:";
+        for (const int count : transfer.send_counts) {
+            std::cout << " " << count;
+        }
+        std::cout << " receives:";
+        for (const int count : transfer.receive_counts) {
+            std::cout << " " << count;
+        }
+        std::cout << "\n";
+    }
+
+    std::cout << "distributed merged outputs:\n";
+    for (std::size_t rank = 0; rank < distributed_execution.merged_outputs_by_rank.size(); ++rank) {
+        for (std::size_t index = 0; index < distributed_execution.merged_outputs_by_rank[rank].size(); ++index) {
+            std::cout << " rank " << rank << " token " << tokens_by_rank[rank][index].id
+                      << " -> output " << std::fixed << std::setprecision(4)
+                      << distributed_execution.merged_outputs_by_rank[rank][index] << "\n";
+        }
+    }
+
     return 0;
 }
