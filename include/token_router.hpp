@@ -16,6 +16,7 @@ struct RoutedToken {
     std::size_t token_index{};
     std::uint32_t expert_id{};
     int destination_rank{};
+    int source_rank{};
 };
 
 struct RoutingPlan {
@@ -61,6 +62,11 @@ struct TransferBatch {
 
 struct DistributedTransferPlan {
     std::vector<TransferBatch> per_rank;
+    std::vector<std::vector<RoutedToken>> routed_tokens_by_destination;
+};
+
+struct DistributedTransferExecution {
+    std::vector<std::vector<float>> merged_outputs_by_rank;
 };
 
 struct ExpertPreference {
@@ -201,6 +207,11 @@ public:
     DistributedTransferPlan build_distributed_transfer_plan(
         const std::vector<std::vector<Token>>& tokens_by_rank,
         std::size_t hidden_size) const;
+    DistributedTransferExecution execute_distributed_transfer_plan(
+        const std::vector<std::vector<Token>>& tokens_by_rank,
+        const DistributedTransferPlan& plan,
+        const ExpertLayer& expert_layer,
+        std::size_t top_k = 1) const;
     std::vector<ExpertPreference> route_token_topk(const Token& token, std::size_t top_k) const;
     ExpertExecutionPass execute_remote_expert_pass(const Token* tokens,
                                                  std::size_t token_count,

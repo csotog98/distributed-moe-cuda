@@ -295,6 +295,7 @@ DistributedTransferPlan TokenRouter::build_distributed_transfer_plan(
 
     DistributedTransferPlan plan;
     plan.per_rank.resize(total_gpus_);
+    plan.routed_tokens_by_destination.resize(total_gpus_);
     for (std::size_t rank = 0; rank < total_gpus_; ++rank) {
         TransferBatch& batch = plan.per_rank[rank];
         batch.send_counts = send_counts[rank];
@@ -316,8 +317,12 @@ DistributedTransferPlan TokenRouter::build_distributed_transfer_plan(
 
         std::vector<std::size_t> cursors = batch.send_offsets;
         for (const Token& token : tokens_by_rank[rank]) {
+            const std::size_t token_index = static_cast<std::size_t>(&token - tokens_by_rank[rank].data());
             const std::size_t destination = static_cast<std::size_t>(
                 route_token_topk(token, 1).front().expert_id % total_gpus_);
+            const auto expert = route_token_topk(token, 1).front().expert_id;
+            plan.routed_tokens_by_destination[destination].push_back(
+                RoutedToken{token.id, token_index, expert, static_cast<int>(destination), static_cast<int>(rank)});
             const std::size_t offset = cursors[destination];
             std::copy(token.hidden.begin(), token.hidden.end(),
                       batch.send_buffer.begin() + static_cast<std::ptrdiff_t>(offset));
@@ -325,6 +330,43 @@ DistributedTransferPlan TokenRouter::build_distributed_transfer_plan(
         }
     }
     return plan;
+}
+
+DistributedTransferExecution TokenRouter::execute_distributed_transfer_plan(
+    const std::vector<std::vector<Token>>& tokens_by_rank,
+    const DistributedTransferPlan& plan,
+    const ExpertLayer& expert_layer,
+    std::size_t top_k) const {
+    if (tokens_by_rank.size() != total_gpus_ || plan.per_rank.size() != total_gpus_ ||
+        plan.routed_tokens_by_destination.size() != total_gpus_) {
+        throw std::invalid_argument("distributed transfer plan does not match the router world size");
+    }
+    if (top_k == 0 || top_k > expert_count_) {
+        throw std::invalid_argument("top_k must be positive and not exceed expert_count");
+    }
+    if (expert_layer.hidden_size() == 0) {
+        throw std::invalid_argument("expert layer hidden size must be positive");
+    }
+
+    DistributedTransferExecution execution;
+    execution.merged_outputs_by_rank.resize(total_gpus_);
+    for (std::size_t source_rank = 0; source_rank < total_gpus_; ++source_rank) {
+        execution.merged_outputs_by_rank[source_rank].resize(tokens_by_rank[source_rank].size(), 0.0F);
+    }
+
+    for (std::size_t destination = 0; destination < total_gpus_; ++destination) {
+        for (const RoutedToken& routed : plan.routed_tokens_by_destination[destination]) {
+            if (routed.source_rank < 0 || static_cast<std::size_t>(routed.source_rank) >= total_gpus_ ||
+                routed.token_index >= tokens_by_rank[static_cast<std::size_t>(routed.source_rank)].size()) {
+                throw std::out_of_range("routed token is missing from the distributed input");
+            }
+            const std::size_t source_rank = static_cast<std::size_t>(routed.source_rank);
+            const Token& token = tokens_by_rank[source_rank][routed.token_index];
+            const auto output = expert_layer.forward(token, routed.expert_id);
+            execution.merged_outputs_by_rank[source_rank][routed.token_index] = output.front();
+        }
+    }
+    return execution;
 }
 
 ExpertExecutionPass TokenRouter::execute_remote_expert_pass(const Token* tokens,

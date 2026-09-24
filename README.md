@@ -17,6 +17,7 @@ What is already implemented and validated:
 - transfer buffers and transfer batches
 - destination-ordered transfer packing with stable offsets
 - rank-aware distributed transfer metadata and receive counts
+- CPU execution and merge over rank-aware distributed transfer plans
 - host-to-device and device-to-host `TransferBatch` exchange through NCCL
 - communication-plan modeling
 - all-to-all exchange planning

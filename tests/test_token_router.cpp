@@ -112,6 +112,12 @@ int main() {
     assert(distributed_transfer.per_rank[0].receive_counts[1] == 0);
     assert(distributed_transfer.per_rank[1].send_counts[1] == 3);
         assert(distributed_transfer.per_rank[1].receive_counts[1] == 3);
+    assert(distributed_transfer.routed_tokens_by_destination.size() == 2);
+    std::size_t routed_total = 0;
+    for (const auto& destination_tokens : distributed_transfer.routed_tokens_by_destination) {
+        routed_total += destination_tokens.size();
+    }
+    assert(routed_total == tokens_by_rank[0].size() + tokens_by_rank[1].size());
 
     moe::ExpertLayer expert_layer(3, 4);
     for (const auto& microbatch : batch_plan.microbatches) {
@@ -127,6 +133,14 @@ int main() {
     assert(out0.size() == 1);
     assert(out1.size() == 1);
     assert(out0[0] != out1[0]);
+
+    const auto distributed_execution = router.execute_distributed_transfer_plan(
+        tokens_by_rank, distributed_transfer, expert_layer, 1);
+    assert(distributed_execution.merged_outputs_by_rank.size() == 2);
+    assert(distributed_execution.merged_outputs_by_rank[0].size() == 1);
+    assert(distributed_execution.merged_outputs_by_rank[1].size() == 1);
+    assert(distributed_execution.merged_outputs_by_rank[0][0] > 0.0F);
+    assert(distributed_execution.merged_outputs_by_rank[1][0] > 0.0F);
 
     moe::ExpertLayer execution_layer(2, 4);
     const auto execution = router.execute_remote_expert_pass(tokens.data(), tokens.size(), execution_layer, 1);
