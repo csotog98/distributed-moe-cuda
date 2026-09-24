@@ -213,13 +213,29 @@ int main(int argc, char** argv) {
 
             std::vector<std::size_t> output_cursors = return_batch.send_offsets;
             moe::CudaExpertExecutor cuda_expert(elements, 4);
-            std::size_t received_offset = 0;
-            for (const auto& routed : distributed_plan.received_tokens_by_rank[static_cast<std::size_t>(rank)]) {
-                const std::vector<float> hidden(
-                    transfer_batch.receive_buffer.begin() + static_cast<std::ptrdiff_t>(received_offset),
-                    transfer_batch.receive_buffer.begin() + static_cast<std::ptrdiff_t>(received_offset + elements));
-                const float output = cuda_expert.forward(hidden, routed.expert_id).front();
-                received_offset += elements;
+            const auto& received_tokens = distributed_plan.received_tokens_by_rank[static_cast<std::size_t>(rank)];
+            std::vector<float> expert_outputs(received_tokens.size(), 0.0F);
+            for (std::size_t expert_id = 0; expert_id < 4; ++expert_id) {
+                std::vector<float> expert_hidden;
+                std::vector<std::size_t> route_indices;
+                for (std::size_t route_index = 0; route_index < received_tokens.size(); ++route_index) {
+                    if (received_tokens[route_index].expert_id != expert_id) {
+                        continue;
+                    }
+                    const std::size_t hidden_offset = route_index * elements;
+                    expert_hidden.insert(expert_hidden.end(),
+                                         transfer_batch.receive_buffer.begin() + static_cast<std::ptrdiff_t>(hidden_offset),
+                                         transfer_batch.receive_buffer.begin() + static_cast<std::ptrdiff_t>(hidden_offset + elements));
+                    route_indices.push_back(route_index);
+                }
+                const auto outputs = cuda_expert.forward_batch(expert_hidden, route_indices.size(), expert_id);
+                for (std::size_t output_index = 0; output_index < route_indices.size(); ++output_index) {
+                    expert_outputs[route_indices[output_index]] = outputs[output_index];
+                }
+            }
+            for (std::size_t route_index = 0; route_index < received_tokens.size(); ++route_index) {
+                const auto& routed = received_tokens[route_index];
+                const float output = expert_outputs[route_index];
                 const std::size_t destination = static_cast<std::size_t>(routed.source_rank);
                 return_batch.send_buffer[output_cursors[destination]++] = output;
             }

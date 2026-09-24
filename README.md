@@ -25,6 +25,7 @@ What is already implemented and validated:
 - weighted top-k distributed routing and CPU output merging
 - deterministic CUDA expert kernel with CPU-reference validation in one-rank mode
 - CUDA top-k=2 round-trip and weighted merge validation in one-rank mode
+- expert-grouped CUDA batch execution in the smoke path
 - host-to-device and device-to-host `TransferBatch` exchange through NCCL
 - communication-plan modeling
 - all-to-all exchange planning
