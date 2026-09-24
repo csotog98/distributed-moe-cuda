@@ -63,6 +63,7 @@ struct TransferBatch {
 struct DistributedTransferPlan {
     std::vector<TransferBatch> per_rank;
     std::vector<std::vector<RoutedToken>> routed_tokens_by_destination;
+    std::vector<std::vector<RoutedToken>> received_tokens_by_rank;
 };
 
 struct DistributedTransferExecution {

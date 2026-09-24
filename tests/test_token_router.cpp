@@ -113,6 +113,7 @@ int main() {
     assert(distributed_transfer.per_rank[1].send_counts[1] == 3);
         assert(distributed_transfer.per_rank[1].receive_counts[1] == 3);
     assert(distributed_transfer.routed_tokens_by_destination.size() == 2);
+    assert(distributed_transfer.received_tokens_by_rank.size() == 2);
     std::size_t routed_total = 0;
     for (const auto& destination_tokens : distributed_transfer.routed_tokens_by_destination) {
         routed_total += destination_tokens.size();

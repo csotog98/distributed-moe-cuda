@@ -18,6 +18,7 @@ What is already implemented and validated:
 - destination-ordered transfer packing with stable offsets
 - rank-aware distributed transfer metadata and receive counts
 - CPU execution and merge over rank-aware distributed transfer plans
+- receive-buffer-based expert execution in the CPU distributed baseline
 - host-to-device and device-to-host `TransferBatch` exchange through NCCL
 - communication-plan modeling
 - all-to-all exchange planning
@@ -64,7 +65,7 @@ Work is grouped into small batches to match typical distributed inference patter
 ### Transfers and buffers
 Payloads are packed into transfer buffers with explicit send/receive counts and offsets so the communication layer can serialize and reconstruct the relevant hidden states.
 The CUDA backend can now move a packed `TransferBatch` through device buffers and NCCL, then return the received values to host memory.
-The router also builds rank-aware send and receive metadata from per-rank token batches.
+The router also builds rank-aware send and receive metadata from per-rank token batches. The CPU baseline simulates the exchange into receive buffers before executing the destination experts, preserving the same data flow expected from NCCL.
 
 ### Communication planning
 The system models send and receive stages and an all-to-all exchange plan. This is the abstraction that later connects to NCCL collectives.

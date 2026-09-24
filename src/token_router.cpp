@@ -296,6 +296,7 @@ DistributedTransferPlan TokenRouter::build_distributed_transfer_plan(
     DistributedTransferPlan plan;
     plan.per_rank.resize(total_gpus_);
     plan.routed_tokens_by_destination.resize(total_gpus_);
+    plan.received_tokens_by_rank.resize(total_gpus_);
     for (std::size_t rank = 0; rank < total_gpus_; ++rank) {
         TransferBatch& batch = plan.per_rank[rank];
         batch.send_counts = send_counts[rank];
@@ -323,10 +324,26 @@ DistributedTransferPlan TokenRouter::build_distributed_transfer_plan(
             const auto expert = route_token_topk(token, 1).front().expert_id;
             plan.routed_tokens_by_destination[destination].push_back(
                 RoutedToken{token.id, token_index, expert, static_cast<int>(destination), static_cast<int>(rank)});
+            plan.received_tokens_by_rank[destination].push_back(
+                RoutedToken{token.id, token_index, expert, static_cast<int>(destination), static_cast<int>(rank)});
             const std::size_t offset = cursors[destination];
             std::copy(token.hidden.begin(), token.hidden.end(),
                       batch.send_buffer.begin() + static_cast<std::ptrdiff_t>(offset));
             cursors[destination] += token.hidden.size();
+        }
+    }
+
+    for (std::size_t source_rank = 0; source_rank < total_gpus_; ++source_rank) {
+        for (std::size_t destination = 0; destination < total_gpus_; ++destination) {
+            const TransferBatch& source_batch = plan.per_rank[source_rank];
+            TransferBatch& destination_batch = plan.per_rank[destination];
+            const std::size_t count = static_cast<std::size_t>(source_batch.send_counts[destination]);
+            std::copy(source_batch.send_buffer.begin() +
+                          static_cast<std::ptrdiff_t>(source_batch.send_offsets[destination]),
+                      source_batch.send_buffer.begin() +
+                          static_cast<std::ptrdiff_t>(source_batch.send_offsets[destination] + count),
+                      destination_batch.receive_buffer.begin() +
+                          static_cast<std::ptrdiff_t>(destination_batch.receive_offsets[source_rank]));
         }
     }
     return plan;
@@ -338,7 +355,8 @@ DistributedTransferExecution TokenRouter::execute_distributed_transfer_plan(
     const ExpertLayer& expert_layer,
     std::size_t top_k) const {
     if (tokens_by_rank.size() != total_gpus_ || plan.per_rank.size() != total_gpus_ ||
-        plan.routed_tokens_by_destination.size() != total_gpus_) {
+        plan.routed_tokens_by_destination.size() != total_gpus_ ||
+        plan.received_tokens_by_rank.size() != total_gpus_) {
         throw std::invalid_argument("distributed transfer plan does not match the router world size");
     }
     if (top_k == 0 || top_k > expert_count_) {
@@ -355,15 +373,32 @@ DistributedTransferExecution TokenRouter::execute_distributed_transfer_plan(
     }
 
     for (std::size_t destination = 0; destination < total_gpus_; ++destination) {
-        for (const RoutedToken& routed : plan.routed_tokens_by_destination[destination]) {
+        const auto& transfer = plan.per_rank[destination];
+        const auto& received_tokens = plan.received_tokens_by_rank[destination];
+        if (received_tokens.size() != [&transfer, &expert_layer] {
+                std::size_t count = 0;
+                for (const int value : transfer.receive_counts) {
+                    count += static_cast<std::size_t>(value) / expert_layer.hidden_size();
+                }
+                return count;
+            }()) {
+            throw std::invalid_argument("received token metadata does not match receive counts");
+        }
+
+        std::size_t receive_offset = 0;
+        for (const RoutedToken& routed : received_tokens) {
             if (routed.source_rank < 0 || static_cast<std::size_t>(routed.source_rank) >= total_gpus_ ||
-                routed.token_index >= tokens_by_rank[static_cast<std::size_t>(routed.source_rank)].size()) {
-                throw std::out_of_range("routed token is missing from the distributed input");
+                routed.token_index >= tokens_by_rank[static_cast<std::size_t>(routed.source_rank)].size() ||
+                receive_offset + expert_layer.hidden_size() > transfer.receive_buffer.size()) {
+                throw std::out_of_range("received token metadata is inconsistent with the transfer buffer");
             }
             const std::size_t source_rank = static_cast<std::size_t>(routed.source_rank);
-            const Token& token = tokens_by_rank[source_rank][routed.token_index];
-            const auto output = expert_layer.forward(token, routed.expert_id);
+            const std::vector<float> hidden(
+                transfer.receive_buffer.begin() + static_cast<std::ptrdiff_t>(receive_offset),
+                transfer.receive_buffer.begin() + static_cast<std::ptrdiff_t>(receive_offset + expert_layer.hidden_size()));
+            const auto output = expert_layer.forward(hidden, routed.expert_id);
             execution.merged_outputs_by_rank[source_rank][routed.token_index] = output.front();
+            receive_offset += expert_layer.hidden_size();
         }
     }
     return execution;
