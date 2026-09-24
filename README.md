@@ -134,7 +134,7 @@ The project has been validated on the current machine through:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j2 && ./build/moe_tests && ./build/moe_demo && ./build/moe_cuda_smoke 0 1
 ```
 
-This produces a successful build and passing CPU and CUDA smoke tests. The low-level two-rank NCCL exchange has also been run on a remote host with two RTX 5060 Ti GPUs. The new high-level `TransferBatch` exchange path is currently validated locally in one-rank mode and is ready for the next two-GPU run.
+This produces a successful build and passing CPU and CUDA smoke tests. The high-level two-rank `TransferBatch` exchange path has now been validated on a remote host with two NVIDIA RTX A4000 GPUs, with both ranks completing the router-driven NCCL exchange.
 
 ## Important reality check
 
