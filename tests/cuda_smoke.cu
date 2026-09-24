@@ -3,9 +3,12 @@
 #include <cuda_runtime.h>
 #include <nccl.h>
 
+#include <chrono>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -24,15 +27,50 @@ void check_nccl(ncclResult_t status, const char* operation) {
 
 }  // namespace
 
+bool save_unique_id_to_file(const std::string& path, const ncclUniqueId& unique_id) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output.is_open()) {
+        return false;
+    }
+    output.write(reinterpret_cast<const char*>(&unique_id), sizeof(unique_id));
+    output.flush();
+    return output.good();
+}
+
+bool load_unique_id_from_file(const std::string& path, ncclUniqueId& unique_id) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input.is_open()) {
+        return false;
+    }
+    input.read(reinterpret_cast<char*>(&unique_id), sizeof(unique_id));
+    return input.good() || input.eof();
+}
+
 int main(int argc, char** argv) {
     try {
         int rank = 0;
         int total_gpus = 1;
-        if (argc > 1) {
-            rank = std::stoi(argv[1]);
+        std::string nccl_id_file;
+        for (int i = 1; i < argc; ++i) {
+            const std::string arg = argv[i];
+            if (arg == "--rank" && i + 1 < argc) {
+                rank = std::stoi(argv[++i]);
+            } else if (arg == "--total-gpus" && i + 1 < argc) {
+                total_gpus = std::stoi(argv[++i]);
+            } else if (arg == "--nccl-id-file" && i + 1 < argc) {
+                nccl_id_file = argv[++i];
+            } else if (arg == "--help") {
+                std::cout << "Usage: moe_cuda_smoke [--rank N] [--total-gpus N] [--nccl-id-file path]\n";
+                return EXIT_SUCCESS;
+            }
         }
-        if (argc > 2) {
-            total_gpus = std::stoi(argv[2]);
+
+        const char* env_path = std::getenv("MOE_NCCL_ID_FILE");
+        if (!nccl_id_file.empty() && env_path != nullptr && std::string(env_path) != "") {
+            nccl_id_file = env_path;
+        }
+        if (nccl_id_file.empty()) {
+            nccl_id_file = std::getenv("MOE_NCCL_ID_FILE") ? std::string(std::getenv("MOE_NCCL_ID_FILE")) : "";
         }
 
         if (total_gpus <= 0) {
@@ -58,7 +96,27 @@ int main(int argc, char** argv) {
         check_cuda(cudaSetDevice(rank), "cudaSetDevice");
 
         ncclUniqueId unique_id{};
-        check_nccl(ncclGetUniqueId(&unique_id), "ncclGetUniqueId");
+        if (!nccl_id_file.empty()) {
+            if (rank == 0) {
+                check_nccl(ncclGetUniqueId(&unique_id), "ncclGetUniqueId");
+                if (!save_unique_id_to_file(nccl_id_file, unique_id)) {
+                    throw std::runtime_error("failed to write shared NCCL unique id to file: " + nccl_id_file);
+                }
+            } else {
+                for (int attempt = 0; attempt < 200; ++attempt) {
+                    if (load_unique_id_from_file(nccl_id_file, unique_id)) {
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+                if (!load_unique_id_from_file(nccl_id_file, unique_id)) {
+                    throw std::runtime_error("timed out waiting for shared NCCL unique id at: " + nccl_id_file);
+                }
+            }
+        } else {
+            check_nccl(ncclGetUniqueId(&unique_id), "ncclGetUniqueId");
+        }
+
         ncclComm_t communicator{};
         check_nccl(ncclCommInitRank(&communicator, total_gpus, unique_id, rank), "ncclCommInitRank");
 
