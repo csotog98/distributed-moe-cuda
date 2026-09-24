@@ -17,6 +17,7 @@ struct RoutedToken {
     std::uint32_t expert_id{};
     int destination_rank{};
     int source_rank{};
+    float routing_weight{1.0F};
 };
 
 struct RoutingPlan {
@@ -214,7 +215,8 @@ public:
                                      std::size_t microbatch_size = 2) const;
     DistributedTransferPlan build_distributed_transfer_plan(
         const std::vector<std::vector<Token>>& tokens_by_rank,
-        std::size_t hidden_size) const;
+        std::size_t hidden_size,
+        std::size_t top_k = 1) const;
     DistributedTransferExecution execute_distributed_transfer_plan(
         const std::vector<std::vector<Token>>& tokens_by_rank,
         const DistributedTransferPlan& plan,

@@ -1,6 +1,7 @@
 #include "token_router.hpp"
 
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 #include <vector>
 
@@ -160,6 +161,49 @@ int main() {
     assert(distributed_return.per_rank[1].receive_buffer.size() == 1);
     assert(distributed_return.per_rank[0].receive_buffer[0] == distributed_execution.expert_outputs_by_rank[1][0]);
     assert(distributed_return.per_rank[1].receive_buffer[0] == distributed_execution.expert_outputs_by_rank[0][0]);
+
+    const auto top2_transfer = router.build_distributed_transfer_plan(tokens_by_rank, 3, 2);
+    std::size_t top2_routes = 0;
+    for (const auto& destination_tokens : top2_transfer.received_tokens_by_rank) {
+        top2_routes += destination_tokens.size();
+        for (const auto& routed : destination_tokens) {
+            assert(routed.routing_weight > 0.0F);
+            assert(routed.routing_weight < 1.0F);
+        }
+    }
+    assert(top2_routes == 4);
+    for (std::size_t source_rank = 0; source_rank < tokens_by_rank.size(); ++source_rank) {
+        for (std::size_t token_index = 0; token_index < tokens_by_rank[source_rank].size(); ++token_index) {
+            float weight_sum = 0.0F;
+            for (const auto& routed : top2_transfer.routed_tokens_by_destination[0]) {
+                if (routed.source_rank == static_cast<int>(source_rank) && routed.token_index == token_index) {
+                    weight_sum += routed.routing_weight;
+                }
+            }
+            for (const auto& routed : top2_transfer.routed_tokens_by_destination[1]) {
+                if (routed.source_rank == static_cast<int>(source_rank) && routed.token_index == token_index) {
+                    weight_sum += routed.routing_weight;
+                }
+            }
+            assert(weight_sum > 0.999F && weight_sum < 1.001F);
+        }
+    }
+    const auto top2_execution = router.execute_distributed_transfer_plan(
+        tokens_by_rank, top2_transfer, expert_layer, 2);
+    for (std::size_t source_rank = 0; source_rank < tokens_by_rank.size(); ++source_rank) {
+        for (std::size_t token_index = 0; token_index < tokens_by_rank[source_rank].size(); ++token_index) {
+            float expected = 0.0F;
+            for (const auto& destination_tokens : top2_transfer.received_tokens_by_rank) {
+                for (const auto& routed : destination_tokens) {
+                    if (routed.source_rank == static_cast<int>(source_rank) && routed.token_index == token_index) {
+                        expected += expert_layer.forward(tokens_by_rank[source_rank][token_index], routed.expert_id).front() *
+                                    routed.routing_weight;
+                    }
+                }
+            }
+            assert(std::abs(top2_execution.merged_outputs_by_rank[source_rank][token_index] - expected) < 1.0e-5F);
+        }
+    }
 
     moe::ExpertLayer execution_layer(2, 4);
     const auto execution = router.execute_remote_expert_pass(tokens.data(), tokens.size(), execution_layer, 1);

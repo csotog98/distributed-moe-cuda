@@ -4,6 +4,7 @@
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
+#include <utility>
 
 namespace moe {
 namespace {
@@ -273,13 +274,32 @@ TransferBatch TokenRouter::build_transfer_batch(const Token* tokens,
 
 DistributedTransferPlan TokenRouter::build_distributed_transfer_plan(
     const std::vector<std::vector<Token>>& tokens_by_rank,
-    std::size_t hidden_size) const {
+    std::size_t hidden_size,
+    std::size_t top_k) const {
     if (tokens_by_rank.size() != total_gpus_) {
         throw std::invalid_argument("tokens_by_rank must contain one batch per rank");
     }
     if (hidden_size == 0) {
         throw std::invalid_argument("hidden_size must be positive");
     }
+    if (top_k == 0 || top_k > expert_count_) {
+        throw std::invalid_argument("top_k must be positive and not exceed expert_count");
+    }
+
+    const auto weighted_routes = [this, top_k](const Token& token) {
+        const auto routes = route_token_topk(token, top_k);
+        float maximum_score = routes.front().score;
+        float normalization = 0.0F;
+        for (const auto& route : routes) {
+            normalization += std::exp(route.score - maximum_score);
+        }
+        std::vector<std::pair<ExpertPreference, float>> weighted;
+        weighted.reserve(routes.size());
+        for (const auto& route : routes) {
+            weighted.emplace_back(route, std::exp(route.score - maximum_score) / normalization);
+        }
+        return weighted;
+    };
 
     std::vector<std::vector<int>> send_counts(total_gpus_, std::vector<int>(total_gpus_, 0));
     for (std::size_t source_rank = 0; source_rank < total_gpus_; ++source_rank) {
@@ -287,9 +307,11 @@ DistributedTransferPlan TokenRouter::build_distributed_transfer_plan(
             if (token.hidden.size() != hidden_size) {
                 throw std::invalid_argument("token hidden size does not match the expected hidden_size");
             }
-            const std::size_t destination = static_cast<std::size_t>(
-                route_token_topk(token, 1).front().expert_id % total_gpus_);
-            send_counts[source_rank][destination] += static_cast<int>(hidden_size);
+            for (const auto& [route, weight] : weighted_routes(token)) {
+                const std::size_t destination = static_cast<std::size_t>(route.expert_id % total_gpus_);
+                (void)weight;
+                send_counts[source_rank][destination] += static_cast<int>(hidden_size);
+            }
         }
     }
 
@@ -319,17 +341,18 @@ DistributedTransferPlan TokenRouter::build_distributed_transfer_plan(
         std::vector<std::size_t> cursors = batch.send_offsets;
         for (const Token& token : tokens_by_rank[rank]) {
             const std::size_t token_index = static_cast<std::size_t>(&token - tokens_by_rank[rank].data());
-            const std::size_t destination = static_cast<std::size_t>(
-                route_token_topk(token, 1).front().expert_id % total_gpus_);
-            const auto expert = route_token_topk(token, 1).front().expert_id;
-            plan.routed_tokens_by_destination[destination].push_back(
-                RoutedToken{token.id, token_index, expert, static_cast<int>(destination), static_cast<int>(rank)});
-            plan.received_tokens_by_rank[destination].push_back(
-                RoutedToken{token.id, token_index, expert, static_cast<int>(destination), static_cast<int>(rank)});
-            const std::size_t offset = cursors[destination];
-            std::copy(token.hidden.begin(), token.hidden.end(),
-                      batch.send_buffer.begin() + static_cast<std::ptrdiff_t>(offset));
-            cursors[destination] += token.hidden.size();
+            for (const auto& [route, weight] : weighted_routes(token)) {
+                const std::size_t destination = static_cast<std::size_t>(route.expert_id % total_gpus_);
+                const auto routed = RoutedToken{
+                    token.id, token_index, route.expert_id, static_cast<int>(destination),
+                    static_cast<int>(rank), weight};
+                plan.routed_tokens_by_destination[destination].push_back(routed);
+                plan.received_tokens_by_rank[destination].push_back(routed);
+                const std::size_t offset = cursors[destination];
+                std::copy(token.hidden.begin(), token.hidden.end(),
+                          batch.send_buffer.begin() + static_cast<std::ptrdiff_t>(offset));
+                cursors[destination] += token.hidden.size();
+            }
         }
     }
 
@@ -401,7 +424,8 @@ DistributedTransferExecution TokenRouter::execute_distributed_transfer_plan(
                 transfer.receive_buffer.begin() + static_cast<std::ptrdiff_t>(receive_offset + expert_layer.hidden_size()));
             const auto output = expert_layer.forward(hidden, routed.expert_id);
             execution.expert_outputs_by_rank[destination].push_back(output.front());
-            execution.returned_outputs_by_rank[source_rank][routed.token_index] = output.front();
+            execution.returned_outputs_by_rank[source_rank][routed.token_index] +=
+                output.front() * routed.routing_weight;
             receive_offset += expert_layer.hidden_size();
         }
     }

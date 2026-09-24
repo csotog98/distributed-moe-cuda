@@ -22,6 +22,7 @@ What is already implemented and validated:
 - CPU reconstruction of expert outputs back to source ranks
 - explicit CPU return-transfer plans for expert outputs
 - two-stage NCCL round-trip smoke path, validated locally in one-rank mode
+- weighted top-k distributed routing and CPU output merging
 - host-to-device and device-to-host `TransferBatch` exchange through NCCL
 - communication-plan modeling
 - all-to-all exchange planning
@@ -163,7 +164,7 @@ The next realistic milestones are:
 
 1. validate the two-stage CUDA/NCCL round trip on two GPUs
 2. execute and validate the full distributed MoE output on two GPUs
-3. support top-k routing with weighted output combination
+3. add CUDA expert execution with weighted top-k output combination
 4. benchmark overlapped communication and expert execution
 5. production-oriented cleanup and scaling analysis
 
