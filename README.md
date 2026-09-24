@@ -23,9 +23,9 @@ What is already implemented and validated:
 - CUDA/NCCL communicator validation across two ranks
 - real two-GPU peer-to-peer NCCL exchange validation on RTX 5060 Ti hardware
 
-What is still to be proven in real hardware:
+What is still to be proven in the full runtime:
 
-- NCCL async scheduling across multiple ranks
+- overlapped NCCL communication and expert execution across multiple ranks
 - real expert-parallel execution with weight shards
 - connecting the router's transfer batches to the CUDA transport in a full MoE pass
 - full performance and throughput benchmarking
@@ -142,8 +142,8 @@ The current state is best described as:
 
 To reach the next stage, the project needs:
 
-- a 2+ GPU machine for repeated runtime validation
-- true all-to-all communication beyond the modeled plan
+- integration of the router's packed batches with the NCCL transport
+- true all-to-all token exchange driven by per-rank routing metadata
 - optimized expert execution and batching in CUDA
 
 ## Next milestones
